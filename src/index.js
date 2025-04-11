@@ -1,16 +1,10 @@
-// src/index.js
+import inquirer from 'inquirer';
 import chalk from 'chalk';
 import apiRequest from './request';
 import { mediaListBuilder } from './media-list-builder';
 import { mediaDownloader } from './media-downloader';
 import db from './db';
-import { 
-  getAuthToken, 
-  processGroupSelection, 
-  getParallelCount,
-  getOutputDirectory,
-  parseCommandLineArgs
-} from './cli';
+import { startGUI } from './gui';
 
 /**
  * Fetch the groups a user has access to.
@@ -55,6 +49,46 @@ async function fetchAvailableGroups(authToken) {
 }
 
 /**
+ * Prompt the user to select one or multiple groups.
+ *
+ * @param {Array} availableGroups Array of groups the user has access too, returned from the API
+ */
+function selectGroups(availableGroups) {
+  const singleGroupQuestion = {
+    type: 'confirm',
+    name: 'multiSelect',
+    message: 'Would you like to download media from multiple groups?',
+    default: false
+  };
+
+  return inquirer.prompt(singleGroupQuestion).then(({ multiSelect }) => {
+    if (multiSelect) {
+      const multiGroupQuestion = {
+        type: 'checkbox',
+        name: 'groupIds',
+        message: 'Select the groups you want to download (use space to select)',
+        choices: availableGroups,
+        validate: (answer) => {
+          if (answer.length < 1) {
+            return 'You must choose at least one group.';
+          }
+          return true;
+        }
+      };
+      return inquirer.prompt(multiGroupQuestion).then(({ groupIds }) => groupIds);
+    } else {
+      const singleQuestion = {
+        type: 'list',
+        name: 'id',
+        message: 'Select a group',
+        choices: availableGroups,
+      };
+      return inquirer.prompt(singleQuestion).then(({ id }) => [id]);
+    }
+  });
+}
+
+/**
  * Hit the groups API and offer up a list of available groups to the user
  *
  * @param  {String} User supplied auth token
@@ -67,7 +101,9 @@ async function selectFromAvailableGroups(authToken) {
     throw new Error(chalk.red('Sorry, no groups were found.'));
   }
 
-  const groupIds = await processGroupSelection(availableGroups);
+  const groupIds = await selectGroups(availableGroups);
+  
+  db.setToken(authToken);
   
   // Create database entries for each selected group
   groupIds.forEach(id => {
@@ -82,10 +118,8 @@ async function selectFromAvailableGroups(authToken) {
  * 
  * @param {String} authToken 
  * @param {String} groupId 
- * @param {Number} parallelCount
- * @param {String} outputDir
  */
-async function processGroupMedia(authToken, groupId, parallelCount, outputDir) {
+async function processGroupMedia(authToken, groupId) {
   console.log(chalk.cyan(`\nProcessing group ID: ${chalk.green(groupId)}`));
   
   const localGroupData = db.getGroup(groupId);
@@ -94,41 +128,32 @@ async function processGroupMedia(authToken, groupId, parallelCount, outputDir) {
     console.log(
       `Restarting where you left off. ${chalk.green(localGroupData.media.length)} downloads to go!`
     );
-    await mediaDownloader(localGroupData, parallelCount);
+    await mediaDownloader(localGroupData);
   } else {
     const mediaListFromRemote = await mediaListBuilder(authToken, groupId);
-    await mediaDownloader(mediaListFromRemote, parallelCount);
+    await mediaDownloader(mediaListFromRemote);
   }
 }
 
 /**
- * Function called once we have a supplied developer access token
+ * Function called once we have a supplied developer access token from main()
  *
- * Process multiple groups with selected options
+ * Process multiple groups sequentially
  * 
+ * @param {string} token Supplied developer token
  * @returns void
  */
-async function processGroupmeData() {
+async function processGroupmeData(token) {
   try {
-    // Get authentication token
-    const authToken = await getAuthToken();
+    const { authToken, groupIds } = await selectFromAvailableGroups(token);
     
-    // Get groups to process
-    const { groupIds } = await selectFromAvailableGroups(authToken);
-    
-    // Get parallel download count
-    const parallelCount = await getParallelCount();
-    
-    // Get custom output directory if specified
-    const outputDir = await getOutputDirectory();
-    
-    console.log(chalk.cyan(`Selected ${chalk.green(groupIds.length)} groups for downloading with ${chalk.green(parallelCount)} parallel downloads`));
+    console.log(chalk.cyan(`Selected ${chalk.green(groupIds.length)} groups for downloading`));
     
     // Process each group sequentially
     for (let i = 0; i < groupIds.length; i++) {
       const groupId = groupIds[i];
       console.log(chalk.cyan(`\nProcessing group ${i + 1} of ${groupIds.length}`));
-      await processGroupMedia(authToken, groupId, parallelCount, outputDir);
+      await processGroupMedia(authToken, groupId);
     }
     
     console.log(chalk.green('\nAll groups have been processed!'));
@@ -138,48 +163,81 @@ async function processGroupmeData() {
 }
 
 /**
- * Main function
+ * Choose between CLI or GUI mode
  */
-async function main() {
-  // First check if help was requested
-  const args = process.argv.slice(2);
-  if (args.includes('--help') || args.includes('-h')) {
-    printHelp();
-    return;
-  }
-  
-  // Initialize database
-  db.createDb();
-  
-  // Start processing
-  await processGroupmeData();
+function chooseInterface() {
+  const question = [
+    {
+      type: 'list',
+      name: 'interface',
+      message: 'How would you like to use GroupMe Gallery Downloader?',
+      choices: [
+        { name: 'Command Line Interface', value: 'cli' },
+        { name: 'Graphical User Interface', value: 'gui' }
+      ]
+    }
+  ];
+
+  inquirer.prompt(question).then(({ interface }) => {
+    if (interface === 'gui') {
+      console.log(chalk.cyan('Starting GUI...'));
+      startGUI();
+    } else {
+      startCLI();
+    }
+  });
 }
 
 /**
- * Print help information
+ * Start the traditional CLI version
  */
-function printHelp() {
-  console.log(`
-${chalk.bold('GroupMe Gallery Downloader')} - Download media from your GroupMe conversations
+function startCLI() {
+  const existingToken = db.getToken();
+  const questionEnterApiToken = [
+    {
+      type: 'input',
+      name: 'authToken',
+      message: 'Enter your GroupMe API token:',
+    },
+  ];
 
-${chalk.yellow('Usage:')} npm start [options]
+  if (existingToken) {
+    const tokenShortSha = chalk.yellow(existingToken.substr(0, 7));
+    const questions = [
+      {
+        type: 'confirm',
+        name: 'cachedToken',
+        message: `Do you want to use your existing token: ${tokenShortSha}... ?`,
+      },
+    ];
 
-${chalk.yellow('Options:')}
-  -t, --token <token>         Your GroupMe API token
-  -g, --group <id>            Download from a specific group ID
-  -m, --multi-groups <ids>    Download from multiple group IDs (comma-separated)
-  -p, --parallel <number>     Number of parallel downloads (default: 3)
-  -o, --output <directory>    Custom output directory
-  --non-interactive           Run in non-interactive mode
-  -h, --help                  Show this help
-
-${chalk.yellow('Examples:')}
-  npm start                                  # Run in interactive mode
-  npm start -t YOUR_TOKEN                    # Use specific token
-  npm start -g 12345678                      # Download from specific group
-  npm start -m 12345678,87654321 -p 5        # Download from multiple groups with 5 parallel downloads
-  `);
+    inquirer.prompt(questions).then(({ cachedToken }) => {
+      if (cachedToken) {
+        processGroupmeData(existingToken);
+      } else {
+        inquirer.prompt(questionEnterApiToken).then(({ authToken }) => {
+          processGroupmeData(authToken);
+        });
+      }
+    });
+  } else {
+    inquirer.prompt(questionEnterApiToken).then(({ authToken }) => {
+      processGroupmeData(authToken);
+    });
+  }
 }
 
-// Start the application
+/**
+ * Inquirer and download instantiation
+ */
+async function main() {
+  db.createDb();
+  
+  console.log(chalk.green('----------------------------------------'));
+  console.log(chalk.green('| GroupMe Gallery Downloader v1.2.0    |'));
+  console.log(chalk.green('----------------------------------------'));
+  
+  chooseInterface();
+}
+
 main();

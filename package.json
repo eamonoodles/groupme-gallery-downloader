@@ -1,10 +1,11 @@
 {
   "name": "groupme",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Pulls down all media from any GroupMe group you have access too",
-  "author": "Tyler Kelley <tylerckelley@gmail.com> (http://twitter.com/_tkwd)",
+  "author": "Tyler Kelley <tylerckelley@gmail.com> (http://twitter.com/_tkwd), forked by eamonoodles",
   "scripts": {
-    "start": "babel-node --inspect ./src/index.js"
+    "start": "babel-node --inspect ./src/index.js",
+    "gui": "babel-node --inspect ./src/gui-start.js"
   },
   "license": "ISC",
   "dependencies": {
@@ -13,20 +14,18 @@
     "babel-preset-es2015": "^6.24.1",
     "babel-preset-stage-0": "^6.24.1",
     "chalk": "^4.1.0",
-    "commander": "^13.1.0",
-    "date-fns": "^4.1.0",
+    "express": "^4.17.1",
     "inquirer": "^7.3.3",
     "lowdb": "^1.0.0",
     "node-fetch": "^2.6.1",
-    "p-limit": "^6.2.0",
-    "progress": "^2.0.0"
+    "open": "^8.4.0",
+    "progress": "^2.0.0",
+    "socket.io": "^4.4.1"
   },
   "devDependencies": {
     "@types/chalk": "^2.2.0",
+    "@types/express": "^4.17.13",
     "@types/inquirer": "^7.3.0",
-    "@types/lowdb": "^1.0.9",
-    "@types/node-fetch": "^2.5.7",
-    "babel-cli": "^6.26.0",
-    "eslint": "^7.5.0"
+    "@types/node": "^14.14.37"   
+    }
   }
-}
