@@ -1,9 +1,16 @@
-import inquirer from 'inquirer';
+// src/index.js
 import chalk from 'chalk';
 import apiRequest from './request';
 import { mediaListBuilder } from './media-list-builder';
 import { mediaDownloader } from './media-downloader';
 import db from './db';
+import { 
+  getAuthToken, 
+  processGroupSelection, 
+  getParallelCount,
+  getOutputDirectory,
+  parseCommandLineArgs
+} from './cli';
 
 /**
  * Fetch the groups a user has access to.
@@ -48,46 +55,6 @@ async function fetchAvailableGroups(authToken) {
 }
 
 /**
- * Prompt the user to select one or multiple groups.
- *
- * @param {Array} availableGroups Array of groups the user has access too, returned from the API
- */
-function selectGroups(availableGroups) {
-  const singleGroupQuestion = {
-    type: 'confirm',
-    name: 'multiSelect',
-    message: 'Would you like to download media from multiple groups?',
-    default: false
-  };
-
-  return inquirer.prompt(singleGroupQuestion).then(({ multiSelect }) => {
-    if (multiSelect) {
-      const multiGroupQuestion = {
-        type: 'checkbox',
-        name: 'groupIds',
-        message: 'Select the groups you want to download (use space to select)',
-        choices: availableGroups,
-        validate: (answer) => {
-          if (answer.length < 1) {
-            return 'You must choose at least one group.';
-          }
-          return true;
-        }
-      };
-      return inquirer.prompt(multiGroupQuestion).then(({ groupIds }) => groupIds);
-    } else {
-      const singleQuestion = {
-        type: 'list',
-        name: 'id',
-        message: 'Select a group',
-        choices: availableGroups,
-      };
-      return inquirer.prompt(singleQuestion).then(({ id }) => [id]);
-    }
-  });
-}
-
-/**
  * Hit the groups API and offer up a list of available groups to the user
  *
  * @param  {String} User supplied auth token
@@ -100,9 +67,7 @@ async function selectFromAvailableGroups(authToken) {
     throw new Error(chalk.red('Sorry, no groups were found.'));
   }
 
-  const groupIds = await selectGroups(availableGroups);
-  
-  db.setToken(authToken);
+  const groupIds = await processGroupSelection(availableGroups);
   
   // Create database entries for each selected group
   groupIds.forEach(id => {
@@ -117,8 +82,10 @@ async function selectFromAvailableGroups(authToken) {
  * 
  * @param {String} authToken 
  * @param {String} groupId 
+ * @param {Number} parallelCount
+ * @param {String} outputDir
  */
-async function processGroupMedia(authToken, groupId) {
+async function processGroupMedia(authToken, groupId, parallelCount, outputDir) {
   console.log(chalk.cyan(`\nProcessing group ID: ${chalk.green(groupId)}`));
   
   const localGroupData = db.getGroup(groupId);
@@ -127,32 +94,41 @@ async function processGroupMedia(authToken, groupId) {
     console.log(
       `Restarting where you left off. ${chalk.green(localGroupData.media.length)} downloads to go!`
     );
-    await mediaDownloader(localGroupData);
+    await mediaDownloader(localGroupData, parallelCount);
   } else {
     const mediaListFromRemote = await mediaListBuilder(authToken, groupId);
-    await mediaDownloader(mediaListFromRemote);
+    await mediaDownloader(mediaListFromRemote, parallelCount);
   }
 }
 
 /**
- * Function called once we have a supplied developer access token from main()
+ * Function called once we have a supplied developer access token
  *
- * Process multiple groups sequentially
+ * Process multiple groups with selected options
  * 
- * @param {string} token Supplied developer token
  * @returns void
  */
-async function processGroupmeData(token) {
+async function processGroupmeData() {
   try {
-    const { authToken, groupIds } = await selectFromAvailableGroups(token);
+    // Get authentication token
+    const authToken = await getAuthToken();
     
-    console.log(chalk.cyan(`Selected ${chalk.green(groupIds.length)} groups for downloading`));
+    // Get groups to process
+    const { groupIds } = await selectFromAvailableGroups(authToken);
+    
+    // Get parallel download count
+    const parallelCount = await getParallelCount();
+    
+    // Get custom output directory if specified
+    const outputDir = await getOutputDirectory();
+    
+    console.log(chalk.cyan(`Selected ${chalk.green(groupIds.length)} groups for downloading with ${chalk.green(parallelCount)} parallel downloads`));
     
     // Process each group sequentially
     for (let i = 0; i < groupIds.length; i++) {
       const groupId = groupIds[i];
       console.log(chalk.cyan(`\nProcessing group ${i + 1} of ${groupIds.length}`));
-      await processGroupMedia(authToken, groupId);
+      await processGroupMedia(authToken, groupId, parallelCount, outputDir);
     }
     
     console.log(chalk.green('\nAll groups have been processed!'));
@@ -162,44 +138,48 @@ async function processGroupmeData(token) {
 }
 
 /**
- * Inquirer and download instantiation
+ * Main function
  */
 async function main() {
-  db.createDb();
-
-  const existingToken = db.getToken();
-  const questionEnterApiToken = [
-    {
-      type: 'input',
-      name: 'authToken',
-      message: 'Enter your GroupMe API token:',
-    },
-  ];
-
-  if (existingToken) {
-    const tokenShortSha = chalk.yellow(existingToken.substr(0, 7));
-    const questions = [
-      {
-        type: 'confirm',
-        name: 'cachedToken',
-        message: `Do you want to use your existing token: ${tokenShortSha}... ?`,
-      },
-    ];
-
-    inquirer.prompt(questions).then(({ cachedToken }) => {
-      if (cachedToken) {
-        processGroupmeData(existingToken);
-      } else {
-        inquirer.prompt(questionEnterApiToken).then(({ authToken }) => {
-          processGroupmeData(authToken);
-        });
-      }
-    });
-  } else {
-    inquirer.prompt(questionEnterApiToken).then(({ authToken }) => {
-      processGroupmeData(authToken);
-    });
+  // First check if help was requested
+  const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    printHelp();
+    return;
   }
+  
+  // Initialize database
+  db.createDb();
+  
+  // Start processing
+  await processGroupmeData();
 }
 
+/**
+ * Print help information
+ */
+function printHelp() {
+  console.log(`
+${chalk.bold('GroupMe Gallery Downloader')} - Download media from your GroupMe conversations
+
+${chalk.yellow('Usage:')} npm start [options]
+
+${chalk.yellow('Options:')}
+  -t, --token <token>         Your GroupMe API token
+  -g, --group <id>            Download from a specific group ID
+  -m, --multi-groups <ids>    Download from multiple group IDs (comma-separated)
+  -p, --parallel <number>     Number of parallel downloads (default: 3)
+  -o, --output <directory>    Custom output directory
+  --non-interactive           Run in non-interactive mode
+  -h, --help                  Show this help
+
+${chalk.yellow('Examples:')}
+  npm start                                  # Run in interactive mode
+  npm start -t YOUR_TOKEN                    # Use specific token
+  npm start -g 12345678                      # Download from specific group
+  npm start -m 12345678,87654321 -p 5        # Download from multiple groups with 5 parallel downloads
+  `);
+}
+
+// Start the application
 main();
