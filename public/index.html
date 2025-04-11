@@ -1,78 +1,26 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GroupMe Gallery Downloader</title>
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <div class="container">
-    <header>
-      <h1>GroupMe Gallery Downloader</h1>
-    </header>
-    
-    <main>
-      <section id="token-section" class="card">
-        <h2>API Token</h2>
-        <div class="input-group">
-          <input type="password" id="token-input" placeholder="Enter your GroupMe API token">
-          <button id="save-token-btn">Save Token</button>
-        </div>
-        <div class="token-info">
-          <p><small>Your token is stored locally and never shared.</small></p>
-          <p><small>To get your token, visit <a href="https://dev.groupme.com/" target="_blank">https://dev.groupme.com/</a>, login, and click "Access Token".</small></p>
-        </div>
-      </section>
-      
-      <section id="groups-section" class="card hidden">
-        <h2>Select Groups</h2>
-        <div class="loading-spinner" id="groups-loading">Loading groups...</div>
-        <div id="groups-container"></div>
-        <div class="button-container">
-          <button id="select-all-btn">Select All</button>
-          <button id="deselect-all-btn">Deselect All</button>
-          <button id="download-btn" class="primary-btn">Download Media</button>
-        </div>
-      </section>
-      
-      <section id="progress-section" class="card hidden">
-        <h2>Download Progress</h2>
-        <div id="progress-container">
-          <div id="group-progress">
-            <p>Processing groups: <span id="current-group">0</span>/<span id="total-groups">0</span></p>
-            <div class="progress-bar">
-              <div class="progress-fill" id="group-progress-fill"></div>
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>GroupMe Gallery Downloader</title>
+            <link rel="stylesheet" href="styles.css">
+        </head>
+        <body>
+            <div class="container">
+                <h1>GroupMe Gallery Downloader</h1>
+                <div id="token-section">
+                    <!-- ... existing token input ... -->
+                </div>
+                <div id="groups-section">
+                    <h2>Your Groups</h2>
+                    <div id="groups-list"></div>
+                </div>
+                <div id="preview-section" style="display: none">
+                    <h2>Image Previews</h2>
+                    <div id="image-previews" class="preview-grid"></div>
+                </div>
             </div>
-          </div>
-          <div id="media-progress">
-            <p>Downloading media: <span id="completed-media">0</span>/<span id="total-media">0</span></p>
-            <div class="progress-bar">
-              <div class="progress-fill" id="media-progress-fill"></div>
-            </div>
-          </div>
-        </div>
-        <div class="log-container">
-          <h3>Log</h3>
-          <div id="log-output"></div>
-        </div>
-      </section>
-      
-      <section id="gallery-section" class="card hidden">
-        <h2>Downloaded Media</h2>
-        <select id="group-selector">
-          <option value="">Select a group to view media</option>
-        </select>
-        <div id="media-container"></div>
-      </section>
-    </main>
+            <script src="client.js"></script>
+        </body>
+        </html>
     
-    <footer>
-      <p>&copy; 2025 GroupMe Gallery Downloader - <a href="https://github.com/TylerK/groupme-gallery-downloader" target="_blank">GitHub</a></p>
-    </footer>
-  </div>
-  
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="app.js"></script>
-</body>
-</html>

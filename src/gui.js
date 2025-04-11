@@ -69,6 +69,29 @@ export function startGUI() {
     res.json({ success: true });
   });
 
+  app.get('/api/preview/:groupId', async (req, res) => {
+    const token = db.getToken();
+    const { groupId } = req.params;
+    
+    if (!token) {
+      return res.status(401).json({ error: 'No token available' });
+    }
+
+    try {
+      const response = await apiRequest(token, `groups/${groupId}/messages?limit=20`);
+      const messages = await response.json();
+      
+      // Filter messages with attachments that are images
+      const imageUrls = messages.response.messages
+        .filter(msg => msg.attachments && msg.attachments.some(att => att.type === 'image'))
+        .map(msg => msg.attachments.find(att => att.type === 'image').url);
+
+      res.json({ images: imageUrls });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch image previews' });
+    }
+  });
+
   app.get('/api/groups', async (req, res) => {
     const token = db.getToken();
     if (!token) {
@@ -77,9 +100,14 @@ export function startGUI() {
 
     try {
       const groups = await fetchAvailableGroups(token);
-      res.json({ groups });
+      // Add preview flag to each group
+      const groupsWithPreview = groups.map(group => ({
+        ...group,
+        hasPreview: true
+      }));
+      res.json({ groups: groupsWithPreview });
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: 'Failed to fetch groups' });
     }
   });
 
@@ -261,659 +289,400 @@ async function processGroupMedia(authToken, groupId) {
 
 // HTML file for the GUI
 function createHTMLFile(publicDir) {
-  const htmlContent = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GroupMe Gallery Downloader</title>
-  <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-  <div class="container">
-    <header>
-      <h1>GroupMe Gallery Downloader</h1>
-    </header>
-    
-    <main>
-      <section id="token-section" class="card">
-        <h2>API Token</h2>
-        <div class="input-group">
-          <input type="password" id="token-input" placeholder="Enter your GroupMe API token">
-          <button id="save-token-btn">Save Token</button>
-        </div>
-        <div class="token-info">
-          <p><small>Your token is stored locally and never shared.</small></p>
-          <p><small>To get your token, visit <a href="https://dev.groupme.com/" target="_blank">https://dev.groupme.com/</a>, login, and click "Access Token".</small></p>
-        </div>
-      </section>
-      
-      <section id="groups-section" class="card hidden">
-        <h2>Select Groups</h2>
-        <div class="loading-spinner" id="groups-loading">Loading groups...</div>
-        <div id="groups-container"></div>
-        <div class="button-container">
-          <button id="select-all-btn">Select All</button>
-          <button id="deselect-all-btn">Deselect All</button>
-          <button id="download-btn" class="primary-btn">Download Media</button>
-        </div>
-      </section>
-      
-      <section id="progress-section" class="card hidden">
-        <h2>Download Progress</h2>
-        <div id="progress-container">
-          <div id="group-progress">
-            <p>Processing groups: <span id="current-group">0</span>/<span id="total-groups">0</span></p>
-            <div class="progress-bar">
-              <div class="progress-fill" id="group-progress-fill"></div>
+    const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>GroupMe Gallery Downloader</title>
+            <link rel="stylesheet" href="styles.css">
+            <script src="/socket.io/socket.io.js"></script>
+        </head>
+        <body>
+            <div class="container">
+                <h1>GroupMe Gallery Downloader</h1>
+                <div id="token-section" class="card">
+                    <h2>API Token</h2>
+                    <div class="input-group">
+                        <input type="text" id="token-input" placeholder="Enter your GroupMe API token">
+                        <button id="save-token-btn" class="primary-btn">Save Token</button>
+                    </div>
+                </div>
+                <div id="groups-section" class="hidden">
+                    <h2>Your Groups</h2>
+                    <div class="button-container">
+                        <button id="select-all-btn">Select All</button>
+                        <button id="deselect-all-btn">Deselect All</button>
+                        <button id="download-btn" class="primary-btn" disabled>Download Selected</button>
+                    </div>
+                    <div id="groups-loading" class="loading-spinner">Loading groups...</div>
+                    <div id="groups-container"></div>
+                </div>
+                <div id="preview-section" class="hidden">
+                    <h2>Image Previews</h2>
+                    <div id="image-previews" class="preview-grid"></div>
+                </div>
+                <div id="progress-section" class="hidden">
+                    <h2>Download Progress</h2>
+                    <div class="progress-info">
+                        <p>Group Progress: <span id="current-group">0</span>/<span id="total-groups">0</span></p>
+                        <div class="progress-bar">
+                            <div id="group-progress-fill" class="progress-fill"></div>
+                        </div>
+                        <p>Media Progress: <span id="completed-media">0</span>/<span id="total-media">0</span></p>
+                        <div class="progress-bar">
+                            <div id="media-progress-fill" class="progress-fill"></div>
+                        </div>
+                    </div>
+                    <div id="log-container" class="log-container">
+                        <div id="log-output"></div>
+                    </div>
+                </div>
             </div>
-          </div>
-          <div id="media-progress">
-            <p>Downloading media: <span id="completed-media">0</span>/<span id="total-media">0</span></p>
-            <div class="progress-bar">
-              <div class="progress-fill" id="media-progress-fill"></div>
-            </div>
-          </div>
-        </div>
-        <div class="log-container">
-          <h3>Log</h3>
-          <div id="log-output"></div>
-        </div>
-      </section>
-      
-      <section id="gallery-section" class="card hidden">
-        <h2>Downloaded Media</h2>
-        <select id="group-selector">
-          <option value="">Select a group to view media</option>
-        </select>
-        <div id="media-container"></div>
-      </section>
-    </main>
-    
-    <footer>
-      <p>&copy; 2025 GroupMe Gallery Downloader - <a href="https://github.com/TylerK/groupme-gallery-downloader" target="_blank">GitHub</a></p>
-    </footer>
-  </div>
-  
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="app.js"></script>
-</body>
-</html>`;
-
-  fs.writeFileSync(path.join(publicDir, 'index.html'), htmlContent);
+            <script src="app.js"></script>
+        </body>
+        </html>
+    `;
+    fs.writeFileSync(path.join(publicDir, 'index.html'), html);
 }
-
 // CSS file for the GUI
 function createCSSFile(publicDir) {
-  const cssContent = `* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+    const cssContent = `
+    * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+    }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+        line-height: 1.6;
+        color: #333;
+        background-color: #f5f5f5;
+    }
+    .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    header {
+        text-align: center;
+        margin-bottom: 30px;
+    }
+    h1 {
+        color: #00aff0;
+    }
+    h2 {
+        color: #333;
+        margin-bottom: 15px;
+    }
+    .card {
+        background-color: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    .input-group {
+        display: flex;
+        margin-bottom: 10px;
+    }
+    input[type="text"],
+    input[type="password"] {
+        flex: 1;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        margin-right: 10px;
+    }
+    button {
+        padding: 10px 15px;
+        background-color: #f5f5f5;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+    }
+    button:hover {
+        background-color: #e9e9e9;
+    }
+    .primary-btn {
+        background-color: #00aff0;
+        color: white;
+        border: none;
+    }
+    .primary-btn:hover {
+        background-color: #0095cc;
+    }
+    .button-container {
+        margin-top: 15px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+    }
+    .hidden {
+        display: none;
+    }
+    .groups-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 15px;
+        margin-top: 15px;
+    }
+    .group-item {
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+    }
+    .group-item:hover {
+        background-color: #f9f9f9;
+    }
+    .group-item.selected {
+        background-color: #e3f2fd;
+        border-color: #00aff0;
+    }
+    .progress-bar {
+        height: 20px;
+        background-color: #f0f0f0;
+        border-radius: 10px;
+        margin: 10px 0 20px;
+        overflow: hidden;
+    }
+    .progress-fill {
+        height: 100%;
+        background-color: #00aff0;
+        width: 0%;
+        transition: width 0.3s ease;
+    }
+    .log-container {
+        margin-top: 20px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 10px;
+        max-height: 300px;
+        overflow-y: auto;
+    }
+    #log-output {
+        font-family: monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+    }
+    .log-entry {
+        margin-bottom: 5px;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 5px;
+    }
+    #media-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 15px;
+        margin-top: 15px;
+    }
+    .media-item {
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+    .media-item img {
+        width: 100%;
+        height: 200px;
+        object-fit: cover;
+    }
+    .media-info {
+        padding: 10px;
+        font-size: 12px;
+    }
+    select {
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        width: 100%;
+        margin-bottom: 15px;
+    }
+    .loading-spinner {
+        text-align: center;
+        padding: 20px;
+        color: #666;
+    }
+    footer {
+        text-align: center;
+        color: #666;
+        margin-top: 30px;
+    }
+    footer a {
+        color: #00aff0;
+        text-decoration: none;
+    }
+    .preview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+    .preview-image {
+        width: 100%;
+        height: 200px;
+        object-fit: cover;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+    .preview-image:hover {
+        transform: scale(1.05);
+    }
+    `;
+    fs.writeFileSync(path.join(publicDir, 'styles.css'), cssContent);
 }
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-  line-height: 1.6;
-  color: #333;
-  background-color: #f5f5f5;
-}
-
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 20px;
-}
-
-header {
-  text-align: center;
-  margin-bottom: 30px;
-}
-
-h1 {
-  color: #00aff0;
-}
-
-h2 {
-  color: #333;
-  margin-bottom: 15px;
-}
-
-.card {
-  background-color: #fff;
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-  padding: 20px;
-  margin-bottom: 20px;
-}
-
-.input-group {
-  display: flex;
-  margin-bottom: 10px;
-}
-
-input[type="text"],
-input[type="password"] {
-  flex: 1;
-  padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  margin-right: 10px;
-}
-
-button {
-  padding: 10px 15px;
-  background-color: #f5f5f5;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.3s;
-}
-
-button:hover {
-  background-color: #e9e9e9;
-}
-
-.primary-btn {
-  background-color: #00aff0;
-  color: white;
-  border: none;
-}
-
-.primary-btn:hover {
-  background-color: #0095cc;
-}
-
-.button-container {
-  margin-top: 15px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.hidden {
-  display: none;
-}
-
-.groups-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 15px;
-  margin-top: 15px;
-}
-
-.group-item {
-  padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.3s;
-}
-
-.group-item:hover {
-  background-color: #f9f9f9;
-}
-
-.group-item.selected {
-  background-color: #e3f2fd;
-  border-color: #00aff0;
-}
-
-.progress-bar {
-  height: 20px;
-  background-color: #f0f0f0;
-  border-radius: 10px;
-  margin: 10px 0 20px;
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  background-color: #00aff0;
-  width: 0%;
-  transition: width 0.3s ease;
-}
-
-.log-container {
-  margin-top: 20px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 10px;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-#log-output {
-  font-family: monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-}
-
-.log-entry {
-  margin-bottom: 5px;
-  border-bottom: 1px solid #eee;
-  padding-bottom: 5px;
-}
-
-#media-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 15px;
-  margin-top: 15px;
-}
-
-.media-item {
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.media-item img {
-  width: 100%;
-  height: 200px;
-  object-fit: cover;
-}
-
-.media-info {
-  padding: 10px;
-  font-size: 12px;
-}
-
-select {
-  padding: 10px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  width: 100%;
-  margin-bottom: 15px;
-}
-
-.loading-spinner {
-  text-align: center;
-  padding: 20px;
-  color: #666;
-}
-
-footer {
-  text-align: center;
-  color: #666;
-  margin-top: 30px;
-}
-
-footer a {
-  color: #00aff0;
-  text-decoration: none;
-}`;
-
-  fs.writeFileSync(path.join(publicDir, 'styles.css'), cssContent);
-}
-
 // Client-side JavaScript for the GUI
 function createClientJSFile(publicDir) {
-  const jsContent = `document.addEventListener('DOMContentLoaded', function() {
-  // DOM Elements
-  const tokenInput = document.getElementById('token-input');
-  const saveTokenBtn = document.getElementById('save-token-btn');
-  const groupsSection = document.getElementById('groups-section');
-  const groupsContainer = document.getElementById('groups-container');
-  const groupsLoading = document.getElementById('groups-loading');
-  const selectAllBtn = document.getElementById('select-all-btn');
-  const deselectAllBtn = document.getElementById('deselect-all-btn');
-  const downloadBtn = document.getElementById('download-btn');
-  const progressSection = document.getElementById('progress-section');
-  const currentGroupEl = document.getElementById('current-group');
-  const totalGroupsEl = document.getElementById('total-groups');
-  const completedMediaEl = document.getElementById('completed-media');
-  const totalMediaEl = document.getElementById('total-media');
-  const groupProgressFill = document.getElementById('group-progress-fill');
-  const mediaProgressFill = document.getElementById('media-progress-fill');
-  const logOutput = document.getElementById('log-output');
-  const gallerySection = document.getElementById('gallery-section');
-  const groupSelector = document.getElementById('group-selector');
-  const mediaContainer = document.getElementById('media-container');
-  
-  // State
-  let selectedGroups = [];
-  let allGroups = [];
-  let socket;
-  
-  // Initialize
-  init();
-  
-  function init() {
-    // Check for saved token
-    fetchToken();
-    
-    // Setup event listeners
-    saveTokenBtn.addEventListener('click', handleSaveToken);
-    selectAllBtn.addEventListener('click', handleSelectAll);
-    deselectAllBtn.addEventListener('click', handleDeselectAll);
-    downloadBtn.addEventListener('click', handleDownload);
-    groupSelector.addEventListener('change', handleGroupSelect);
-    
-    // Initialize socket connection
-    setupSocket();
-  }
-  
-  function setupSocket() {
-    socket = io();
-    
-    socket.on('connect', () => {
-      console.log('Connected to server');
-    });
-    
-    socket.on('log', (data) => {
-      addLogEntry(data.message);
-    });
-    
-    socket.on('downloadStarted', (data) => {
-      showProgressSection(data);
-    });
-    
-    socket.on('groupProcessing', (data) => {
-      updateGroupProgress(data);
-    });
-    
-    socket.on('mediaProcessing', (data) => {
-      updateMediaProgress(data);
-    });
-    
-    socket.on('mediaDownloaded', (data) => {
-      incrementCompletedMedia();
-    });
-    
-    socket.on('downloadCompleted', () => {
-      completeDownload();
-    });
-    
-    socket.on('downloadError', (data) => {
-      addLogEntry('Error: ' + data.error, true);
-    });
-  }
-  
-  async function fetchToken() {
-    try {
-      const response = await fetch('/api/token');
-      const data = await response.json();
-      
-      if (data.token) {
-        tokenInput.value = data.token;
-        fetchGroups();
-      }
-    } catch (error) {
-      console.error('Error fetching token:', error);
-    }
-  }
-  
-  async function handleSaveToken() {
-    const token = tokenInput.value.trim();
-    
-    if (!token) {
-      alert('Please enter a valid token');
-      return;
-    }
-    
-    try {
-      const response = await fetch('/api/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ token })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        fetchGroups();
-      }
-    } catch (error) {
-      console.error('Error saving token:', error);
-      alert('Failed to save token');
-    }
-  }
-  
-  async function fetchGroups() {
-    groupsSection.classList.remove('hidden');
-    groupsLoading.classList.remove('hidden');
-    groupsContainer.innerHTML = '';
-    
-    try {
-      const response = await fetch('/api/groups');
-      const data = await response.json();
-      
-      if (data.groups && data.groups.length > 0) {
-        allGroups = data.groups;
-        renderGroups(data.groups);
-        updateGroupSelector();
-      } else {
-        groupsContainer.innerHTML = '<p>No groups found. Please check your token.</p>';
-      }
-    } catch (error) {
-      console.error('Error fetching groups:', error);
-      groupsContainer.innerHTML = '<p>Error fetching groups. Please check your token.</p>';
-    } finally {
-      groupsLoading.classList.add('hidden');
-    }
-  }
-  
-  function renderGroups(groups) {
-    const groupsGrid = document.createElement('div');
-    groupsGrid.className = 'groups-grid';
-    
-    groups.forEach(group => {
-      const groupItem = document.createElement('div');
-      groupItem.className = 'group-item';
-      groupItem.dataset.id = group.id;
-      groupItem.textContent = group.name;
-      
-      groupItem.addEventListener('click', () => {
-        toggleGroupSelection(groupItem, group.id);
-      });
-      
-      groupsGrid.appendChild(groupItem);
-    });
-    
-    groupsContainer.appendChild(groupsGrid);
-  }
-  
-  function toggleGroupSelection(element, groupId) {
-    if (element.classList.contains('selected')) {
-      element.classList.remove('selected');
-      selectedGroups = selectedGroups.filter(id => id !== groupId);
-    } else {
-      element.classList.add('selected');
-      selectedGroups.push(groupId);
-    }
-    
-    updateDownloadButton();
-  }
-  
-  function updateDownloadButton() {
-    downloadBtn.disabled = selectedGroups.length === 0;
-  }
-  
-  function handleSelectAll() {
-    const groupItems = document.querySelectorAll('.group-item');
-    groupItems.forEach(item => {
-      item.classList.add('selected');
-      if (!selectedGroups.includes(item.dataset.id)) {
-        selectedGroups.push(item.dataset.id);
-      }
-    });
-    updateDownloadButton();
-  }
-  
-  function handleDeselectAll() {
-    const groupItems = document.querySelectorAll('.group-item');
-    groupItems.forEach(item => {
-      item.classList.remove('selected');
-    });
-    selectedGroups = [];
-    updateDownloadButton();
-  }
-  
-  async function handleDownload() {
-    if (selectedGroups.length === 0) {
-      alert('Please select at least one group');
-      return;
-    }
-    
-    try {
-      const response = await fetch('/api/download', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ groupIds: selectedGroups })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        // Progress will be updated via socket events
-      }
-    } catch (error) {
-      console.error('Error starting download:', error);
-      alert('Failed to start download');
-    }
-  }
-  
-  function showProgressSection(data) {
-    groupsSection.classList.add('hidden');
-    progressSection.classList.remove('hidden');
-    gallerySection.classList.remove('hidden');
-    
-    totalGroupsEl.textContent = data.totalGroups;
-    currentGroupEl.textContent = '0';
-    completedMediaEl.textContent = '0';
-    totalMediaEl.textContent = '0';
-    groupProgressFill.style.width = '0%';
-    mediaProgressFill.style.width = '0%';
-    logOutput.innerHTML = '';
-    
-    addLogEntry('Download started');
-  }
-  
-  function updateGroupProgress(data) {
-    currentGroupEl.textContent = data.current;
-    const percentage = (data.current / data.total) * 100;
-    groupProgressFill.style.width = percentage + '%';
-    
-    addLogEntry('Processing group ' + data.current + ' of ' + data.total + ' (ID: ' + data.groupId + ')');
-  }
-  
-  function updateMediaProgress(data) {
-    totalMediaEl.textContent = data.total;
-    completedMediaEl.textContent = data.total - data.remaining;
-    const percentage = ((data.total - data.remaining) / data.total) * 100;
-    mediaProgressFill.style.width = percentage + '%';
-    
-    addLogEntry('Found ' + data.total + ' media items to download');
-  }
-  
-  function incrementCompletedMedia() {
-    const completed = parseInt(completedMediaEl.textContent) + 1;
-    const total = parseInt(totalMediaEl.textContent);
-    completedMediaEl.textContent = completed;
-    
-    const percentage = (completed / total) * 100;
-    mediaProgressFill.style.width = percentage + '%';
-  }
-  
-  function completeDownload() {
-    addLogEntry('Download completed!', true);
-    updateGroupSelector();
-  }
-  
-  function addLogEntry(message, highlight = false) {
-    const entry = document.createElement('div');
-    entry.className = 'log-entry' + (highlight ? ' highlight' : '');
-    entry.textContent = message;
-    logOutput.appendChild(entry);
-    logOutput.scrollTop = logOutput.scrollHeight;
-  }
-  
-  async function updateGroupSelector() {
-    // Clear existing options except first
-    while (groupSelector.options.length > 1) {
-      groupSelector.remove(1);
-    }
-    
-    // Get all downloaded group IDs
-    const mediaDir = '../media/';
-    try {
-      for (const group of allGroups) {
-        // Check if we have media for this group
-        const response = await fetch(\`/api/media/\${group.id}\`);
-        const data = await response.json();
+    const js = `
+    document.addEventListener('DOMContentLoaded', function() {
+        // DOM Elements
+        const tokenInput = document.getElementById('token-input');
+        const saveTokenBtn = document.getElementById('save-token-btn');
+        const groupsSection = document.getElementById('groups-section');
+        const groupsContainer = document.getElementById('groups-container');
+        const previewGrid = document.getElementById('image-previews');
+        const groupsLoading = document.getElementById('groups-loading');
+        const previewSection = document.getElementById('preview-section');
         
-        if (data.files && data.files.length > 0) {
-          const option = document.createElement('option');
-          option.value = group.id;
-          option.textContent = group.name;
-          groupSelector.appendChild(option);
+        // Initialize socket connection
+        const socket = io();
+        
+        async function fetchToken() {
+            try {
+                const response = await fetch('/api/token');
+                const data = await response.json();
+                
+                if (data.token) {
+                    tokenInput.value = data.token;
+                    await fetchGroups();
+                }
+            } catch (error) {
+                console.error('Error fetching token:', error);
+            }
         }
-      }
-    } catch (error) {
-      console.error('Error updating group selector:', error);
-    }
-  }
-  
-  async function handleGroupSelect() {
-    const groupId = groupSelector.value;
-    
-    if (!groupId) {
-      mediaContainer.innerHTML = '<p>Select a group to view downloaded media</p>';
-      return;
-    }
-    
-    try {
-      const response = await fetch(\`/api/media/\${groupId}\`);
-      const data = await response.json();
-      
-      renderMedia(data.files);
-    } catch (error) {
-      console.error('Error fetching media:', error);
-      mediaContainer.innerHTML = '<p>Error loading media</p>';
-    }
-  }
-  
-  function renderMedia(files) {
-    mediaContainer.innerHTML = '';
-    
-    if (files.length === 0) {
-      mediaContainer.innerHTML = '<p>No media found for this group</p>';
-      return;
-    }
-    
-    files.forEach(file => {
-      const mediaItem = document.createElement('div');
-      mediaItem.className = 'media-item';
-      
-      if (file.name.match(/(png|jpeg|jpg|gif|bmp|webp)$/i)) {
-        // Image
-        const img = document.createElement('img');
-        img.src = file.path;
-        img.alt = file.name;
-        mediaItem.appendChild(img);
-      } else {
-        // Video
-        const video = document.createElement('video');
-        video.src = file.path;
-        video.controls = true;
-        video.style.width = '100%';
-        video.style.height = '200px';
-        mediaItem.appendChild(video);
-      }
-      
-      const info = document.createElement('div');
-      info.className = 'media-info';
-      info.textContent = file.name;
-      mediaItem.appendChild(info);
-      
-      mediaContainer.appendChild(mediaItem);
-    });
-  }
-});`;
 
-  fs.writeFileSync(path.join(publicDir, 'app.js'), jsContent);
+        async function handleSaveToken() {
+            const token = tokenInput.value.trim();
+            
+            if (!token) {
+                alert('Please enter a valid token');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ token })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    await fetchGroups();
+                }
+            } catch (error) {
+                console.error('Error saving token:', error);
+                alert('Failed to save token');
+            }
+        }
+
+        async function fetchGroups() {
+            groupsSection.classList.remove('hidden');
+            groupsLoading.classList.remove('hidden');
+            groupsContainer.innerHTML = '';
+            
+            try {
+                const response = await fetch('/api/groups');
+                const data = await response.json();
+                
+                if (data.groups && data.groups.length > 0) {
+                    renderGroups(data.groups);
+                } else {
+                    groupsContainer.innerHTML = '<p>No groups found. Please check your token.</p>';
+                }
+            } catch (error) {
+                console.error('Error fetching groups:', error);
+                groupsContainer.innerHTML = '<p>Error fetching groups. Please check your token.</p>';
+            } finally {
+                groupsLoading.classList.add('hidden');
+            }
+        }
+
+       function renderGroups(groups) {
+    const html = groups.map(group => `
+        <div class="group-item" data-id="${group.id}">
+            <div class="group-info">
+                <h3>${group.name}</h3>
+            </div>
+            <div class="group-actions">
+                <button onclick="showPreviews('${group.id}')" class="preview-btn">
+                    Show Previews
+                </button>
+                <button onclick="downloadGroup('${group.id}')" class="download-btn primary-btn">
+                    Download
+                </button>
+            </div>
+        </div>
+    `).join('');
+    groupsContainer.innerHTML = html;
+}
+
+            
+            groupsContainer.innerHTML = html;
+        }
+
+        // Make these functions available globally
+        window.showPreviews = async function(groupId) {
+            try {
+                const response = await fetch(`/api/preview/${groupId}`);
+                const data = await response.json();
+                
+                previewGrid.innerHTML = data.images
+                    .map(url => `
+                        <img 
+                            src="${url}"
+                            class="preview-image"
+                            alt="Group Image Preview"
+                            onclick="window.open('${url}', '_blank')"
+                        >
+                    `).join('');
+                
+                previewSection.style.display = 'block';
+            } catch (error) {
+                console.error('Failed to load previews:', error);
+            }
+        };
+
+        window.downloadGroup = async function(groupId) {
+            try {
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ groupIds: [groupId] })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Download started! Check the progress section for updates.');
+                }
+            } catch (error) {
+                console.error('Error starting download:', error);
+                alert('Failed to start download');
+            }
+        };
+
+        // Add event listeners
+        saveTokenBtn.addEventListener('click', handleSaveToken);
+        fetchToken();
+    });
+    `;
+    fs.writeFileSync(path.join(publicDir, 'app.js'), js);
 }
