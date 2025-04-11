@@ -169,7 +169,7 @@ function chooseInterface() {
   const question = [
     {
       type: 'list',
-      name: 'interface',
+      name: 'selectedInterface', // Renamed from 'interface' to 'selectedInterface'
       message: 'How would you like to use GroupMe Gallery Downloader?',
       choices: [
         { name: 'Command Line Interface', value: 'cli' },
@@ -178,8 +178,8 @@ function chooseInterface() {
     }
   ];
 
-  inquirer.prompt(question).then(({ interface }) => {
-    if (interface === 'gui') {
+  inquirer.prompt(question).then(({ selectedInterface }) => {
+    if (selectedInterface === 'gui') {
       console.log(chalk.cyan('Starting GUI...'));
       startGUI();
     } else {

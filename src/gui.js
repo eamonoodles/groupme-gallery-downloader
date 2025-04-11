@@ -10,7 +10,7 @@ import { mediaDownloader } from './media-downloader';
 import db from './db';
 import open from 'open';
 
-const __filename = fileURLToPath(import.meta.url);
+const __filename = __filename || module.filename;
 const __dirname = path.dirname(__filename);
 
 // Setup express app
@@ -20,7 +20,7 @@ let server;
 let socketIO;
 
 export function startGUI() {
-  // Add open as a dependency in package.json
+  // Ensure the correct path
   const packageJsonPath = path.join(__dirname, '../package.json');
   const packageData = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
   
