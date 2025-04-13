@@ -26,15 +26,11 @@ server.listen(PORT, () => {
 }).on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.warn(`Port ${PORT} in use, trying ${PORT + 1}...`);
-    server.listen(PORT + 1); // Fallback to next port
+    server.listen(PORT + 1, () => {
+      console.log(`GUI running on http://localhost:${PORT + 1}`);
+    });
   }
 });
-
-const PORT = 3456;
-server.listen(PORT, function() {
-  console.log(`GUI running on http://localhost:${PORT}`);
-});
-
 
 export function startGUI() {
   // Ensure the correct path
