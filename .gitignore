@@ -4,3 +4,6 @@ dist/
 data/
 *.DS_Store
 *.log
+*.token
+.env
+*.json

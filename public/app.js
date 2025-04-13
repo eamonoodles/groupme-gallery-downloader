@@ -1,5 +1,4 @@
-
-    document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function() {
         const socket = io();
         const tokenInput = document.getElementById('token-input');
         const saveTokenBtn = document.getElementById('save-token-btn');
@@ -22,7 +21,8 @@
             .then(response => response.json())
             .then(data => {
                 if (data.token) {
-                    tokenInput.value = data.token;
+                    // Only show first 7 chars of token
+                    tokenInput.value = data.token.substring(0, 7) + '...' + data.token.slice(-4);
                     loadGroups();
                 }
             });
@@ -227,4 +227,3 @@
             });
         });
     });
-    
