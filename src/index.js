@@ -49,19 +49,53 @@ async function processGroupmeData(token) {
       throw new Error('No groups found');
     }
 
-    // Let user select a group
-    const { groupId } = await inquirer.prompt([
+    // Ask if user wants to select multiple groups
+    const { multiSelect } = await inquirer.prompt([
       {
-        type: 'list',
-        name: 'groupId',
-        message: 'Select a group to download:',
-        choices: allGroups.map(g => ({ name: g.name, value: g.id }))
+        type: 'confirm',
+        name: 'multiSelect',
+        message: 'Would you like to download from multiple groups?',
+        default: false
       }
     ]);
 
-    console.log(chalk.blue(`Starting download for selected group...`));
-    const mediaList = await mediaListBuilder(token, groupId);
-    await mediaDownloader(mediaList);
+    let selectedGroupIds;
+    if (multiSelect) {
+      const { groupIds } = await inquirer.prompt([
+        {
+          type: 'checkbox',
+          name: 'groupIds',
+          message: 'Select groups to download (use space to select, enter to confirm):',
+          choices: allGroups.map(g => ({ name: g.name, value: g.id })),
+          validate: (answer) => {
+            if (answer.length < 1) {
+              return 'You must choose at least one group.';
+            }
+            return true;
+          }
+        }
+      ]);
+      selectedGroupIds = groupIds;
+    } else {
+      const { groupId } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'groupId',
+          message: 'Select a group to download:',
+          choices: allGroups.map(g => ({ name: g.name, value: g.id }))
+        }
+      ]);
+      selectedGroupIds = [groupId];
+    }
+
+    // Process each selected group
+    for (let i = 0; i < selectedGroupIds.length; i++) {
+      const groupId = selectedGroupIds[i];
+      const group = allGroups.find(g => g.id === groupId);
+      console.log(chalk.blue(`\nStarting download for ${group.name} (${i + 1}/${selectedGroupIds.length})...`));
+      const mediaList = await mediaListBuilder(token, groupId);
+      await mediaDownloader(mediaList);
+    }
     
   } catch (error) {
     console.error(chalk.red('Error:', error.message));
