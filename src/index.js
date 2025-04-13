@@ -9,16 +9,43 @@ const portfinder = require('portfinder');
 
 async function processGroupmeData(token) {
   try {
-    // Fetch available groups first
-    const response = await apiRequest(token, 'groups');
-    if (response.status === 401) {
-      throw new Error('Invalid or expired token');
+    // Fetch groups with pagination
+    let allGroups = [];
+    let page = 1;
+    const PER_PAGE = 10;
+    
+    while (true) {
+      console.log(`Fetching groups page ${page}...`);
+      
+      const response = await apiRequest(token, 'groups', {
+        page: page,
+        per_page: PER_PAGE
+      });
+      
+      if (response.status === 401) {
+        throw new Error('Invalid or expired token');
+      }
+      
+      const data = await response.json();
+      const groups = data.response;
+      
+      if (!groups || groups.length === 0) {
+        break;
+      }
+
+      allGroups = [...allGroups, ...groups];
+      
+      // If we got fewer items than requested, we've hit the last page
+      if (groups.length < PER_PAGE) {
+        break;
+      }
+      
+      page++;
+      // Small delay between requests
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
-    
-    const data = await response.json();
-    const groups = data.response;
-    
-    if (!groups || groups.length === 0) {
+
+    if (allGroups.length === 0) {
       throw new Error('No groups found');
     }
 
@@ -28,7 +55,7 @@ async function processGroupmeData(token) {
         type: 'list',
         name: 'groupId',
         message: 'Select a group to download:',
-        choices: groups.map(g => ({ name: g.name, value: g.id }))
+        choices: allGroups.map(g => ({ name: g.name, value: g.id }))
       }
     ]);
 
