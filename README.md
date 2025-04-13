@@ -14,7 +14,7 @@ Download all photos and videos from your GroupMe groups with just a few clicks!
 1. Open Terminal (MacOS) or Command Prompt (Windows)
 2. Type this command and press Enter:
    ```
-   git clone https://github.com/eamonday/groupme-gallery-downloader.git
+   git clone https://github.com/eamonoodles/groupme-gallery-downloader.git
    ```
 3. Type this command and press Enter:
    ```
