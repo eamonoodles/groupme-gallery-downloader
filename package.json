@@ -1,11 +1,18 @@
 {
-  "name": "groupme",
-  "version": "1.2.0",
+  "name": "groupme-gallery-downloader-fork",
+  "version": "1.2.1",
   "description": "Pulls down all media from any GroupMe group you have access too",
   "author": "Tyler Kelley <tylerckelley@gmail.com> (http://twitter.com/_tkwd), forked by eamonoodles",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/groupme-gallery-downloader.git"
+  },
   "scripts": {
     "start": "babel-node --inspect ./src/index.js",
-    "gui": "babel-node --inspect ./src/gui-start.js"
+    "gui": "babel-node --inspect ./src/gui-start.js",
+    "release:patch": "npm version patch && git push && git push --tags",
+    "release:minor": "npm version minor && git push && git push --tags",
+    "release:major": "npm version major && git push && git push --tags"
   },
   "license": "ISC",
   "dependencies": {

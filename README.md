@@ -1,47 +1,51 @@
-# GroupMe Gallery Downloader
-Download all of the photos in any group you have access to via command line or graphical interface.
+# GroupMe Photo & Video Downloader
 
-## What you'll need
-* An environment capable of running [Node](https://nodejs.org)
-* Git installed locally
-* Your GroupMe access token
+Download all photos and videos from your GroupMe groups with just a few clicks!
 
-## Where to get your access token
-* Go to https://dev.groupme.com/
-* Login with your existing GroupMe credentials.
-* Click "Access Token" 
-* Copy your token to your clipboard
+## Quick Start Guide
 
-## How to run this program
+### Step 1: Get Your Access Key
+1. Go to https://dev.groupme.com/
+2. Click "Sign In" and use your regular GroupMe login
+3. Click where it says "Access Token"
+4. Copy the token (it's like a password - keep it private!)
 
-In terminal or your editor of choice, run the following: 
+### Step 2: Download & Setup
+1. Open Terminal (MacOS) or Command Prompt (Windows)
+2. Type this command and press Enter:
+   ```
+   git clone https://github.com/eamonday/groupme-gallery-downloader.git
+   ```
+3. Type this command and press Enter:
+   ```
+   cd groupme-gallery-downloader
+   ```
+4. Type this command and press Enter:
+   ```
+   npm install
+   ```
+5. Wait for it to finish
 
-* `cd` to your desired location. 
-* `git clone https://github.com/TylerK/groupme-gallery-downloader.git`
-* `cd groupme-gallery-downloader`
-* `yarn && yarn start` - or - `npm i && npm start` 
+### Step 3: Run the Program
+Choose one of these options:
 
-You will be prompted to choose between the command line interface (CLI) or the graphical user interface (GUI). 
+#### Easy Way (Recommended)
+1. Type `npm run gui` and press Enter
+2. A webpage will open
+3. Paste your access token
+4. Select which groups you want to download from
+5. Click "Start Download"
 
-### CLI Mode
-If you choose the CLI mode, you will be prompted for your GroupMe access token. Paste it in and press enter. Assuming all went well, you will now be able to select a group you have access to. Select a group and you should see a stream of photos filling up a newly created `media` folder.
+#### Command Line Way
+1. Type `npm start` and press Enter
+2. Type `1` for command line mode
+3. Paste your access token
+4. Select a group using arrow keys
+5. Press Enter to start downloading
 
-### GUI Mode
-If you choose the GUI mode, a web browser will open with a user-friendly interface. From there you can:
+Your photos and videos will be saved in a new folder (inside the groupme-gallery-downloader) folder called "media"!
 
-1. Enter your GroupMe access token
-2. Select one or multiple groups to download media from
-3. Monitor the download progress in real-time
-4. View downloaded media organized by group
-
-You can also start the GUI directly by running:
-* `yarn gui` - or - `npm run gui`
-
-NOTE: Your access token is stored locally in the `data` folder so you can re-use it later. This folder is ignored by Git, but please do not make it publically available in any way shape or form.  
-
-## Restarting 
-
-Simply run `yarn start` or `npm start` again and select the group you were downloading from, the downloader will pick up where you left off :)
-
-## License
-This project is licensed under the MIT License - see the LICENSE.md file for details.
+## Need Help?
+- Having trouble? Create an issue on GitHub and we'll help you out, or email me at eamon+gpdl@express-is.net
+- Want to run it again later? Just start from Step 3
+- If you are on Windows, try running command prompt as administrator (you might be promped for your password)
