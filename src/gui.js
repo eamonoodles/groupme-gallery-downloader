@@ -13,11 +13,28 @@ import open from 'open';
 const __filename = __filename || module.filename;
 const __dirname = path.dirname(__filename);
 
-// Setup express app
+
+const express = require('express');
 const app = express();
+const server = require('http').createServer(app);
+
+// Setup express app
+const PORT = 3456; // Default port
+
+server.listen(PORT, () => {
+  console.log(`GUI running on http://localhost:${PORT}`);
+}).on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.warn(`Port ${PORT} in use, trying ${PORT + 1}...`);
+    server.listen(PORT + 1); // Fallback to next port
+  }
+});
+
 const PORT = 3456;
-let server;
-let socketIO;
+server.listen(PORT, function() {
+  console.log(`GUI running on http://localhost:${PORT}`);
+});
+
 
 export function startGUI() {
   // Ensure the correct path
@@ -537,152 +554,54 @@ function createCSSFile(publicDir) {
 function createClientJSFile(publicDir) {
     const js = `
     document.addEventListener('DOMContentLoaded', function() {
-        // DOM Elements
-        const tokenInput = document.getElementById('token-input');
-        const saveTokenBtn = document.getElementById('save-token-btn');
-        const groupsSection = document.getElementById('groups-section');
-        const groupsContainer = document.getElementById('groups-container');
-        const previewGrid = document.getElementById('image-previews');
-        const groupsLoading = document.getElementById('groups-loading');
-        const previewSection = document.getElementById('preview-section');
-        
-        // Initialize socket connection
-        const socket = io();
-        
-        async function fetchToken() {
-            try {
-                const response = await fetch('/api/token');
-                const data = await response.json();
-                
-                if (data.token) {
-                    tokenInput.value = data.token;
-                    await fetchGroups();
-                }
-            } catch (error) {
-                console.error('Error fetching token:', error);
-            }
-        }
+        // ... rest of the code ...
 
-        async function handleSaveToken() {
-            const token = tokenInput.value.trim();
-            
-            if (!token) {
-                alert('Please enter a valid token');
-                return;
-            }
-
-            try {
-                const response = await fetch('/api/token', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ token })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    await fetchGroups();
-                }
-            } catch (error) {
-                console.error('Error saving token:', error);
-                alert('Failed to save token');
-            }
-        }
-
-        async function fetchGroups() {
-            groupsSection.classList.remove('hidden');
-            groupsLoading.classList.remove('hidden');
-            groupsContainer.innerHTML = '';
-            
-            try {
-                const response = await fetch('/api/groups');
-                const data = await response.json();
-                
-                if (data.groups && data.groups.length > 0) {
-                    renderGroups(data.groups);
-                } else {
-                    groupsContainer.innerHTML = '<p>No groups found. Please check your token.</p>';
-                }
-            } catch (error) {
-                console.error('Error fetching groups:', error);
-                groupsContainer.innerHTML = '<p>Error fetching groups. Please check your token.</p>';
-            } finally {
-                groupsLoading.classList.add('hidden');
-            }
-        }
-
-       function renderGroups(groups) {
-    const html = groups.map(group => `
-        <div class="group-item" data-id="${group.id}">
-            <div class="group-info">
-                <h3>${group.name}</h3>
-            </div>
-            <div class="group-actions">
-                <button onclick="showPreviews('${group.id}')" class="preview-btn">
-                    Show Previews
-                </button>
-                <button onclick="downloadGroup('${group.id}')" class="download-btn primary-btn">
-                    Download
-                </button>
-            </div>
-        </div>
-    `).join('');
-    groupsContainer.innerHTML = html;
-}
-
-            
+        function renderGroups(groups) {
+            const html = groups.map(group => \\\`
+                <div class="group-item" data-id="\\\${group.id}">
+                    <div class="group-info">
+                        <h3>\\\${group.name}</h3>
+                    </div>
+                    <div class="group-actions">
+                        <button onclick="showPreviews('\\\${group.id}')" class="preview-btn">
+                            Show Previews
+                        </button>
+                        <button onclick="downloadGroup('\\\${group.id}')" class="download-btn primary-btn">
+                            Download
+                        </button>
+                    </div>
+                </div>
+            \\\`).join('');
             groupsContainer.innerHTML = html;
         }
 
-        // Make these functions available globally
+        // ... rest of the code ...
+    });
+
+    // Wrap client-side definitions to prevent errors in Node
+    if (typeof window !== "undefined") {
         window.showPreviews = async function(groupId) {
             try {
-                const response = await fetch(`/api/preview/${groupId}`);
+                const response = await fetch(\`/api/preview/\${groupId}\`); // updated: escaped inner backticks
                 const data = await response.json();
                 
                 previewGrid.innerHTML = data.images
-                    .map(url => `
+                    .map(url => \`
                         <img 
-                            src="${url}"
-                            class="preview-image"
+                            src="\${url}" 
+                            class="preview-image" 
                             alt="Group Image Preview"
-                            onclick="window.open('${url}', '_blank')"
+                            onclick="window.open('\${url}', '_blank')"
                         >
-                    `).join('');
-                
+                    \`)
+                    .join('');
+                            
                 previewSection.style.display = 'block';
             } catch (error) {
                 console.error('Failed to load previews:', error);
             }
         };
-
-        window.downloadGroup = async function(groupId) {
-            try {
-                const response = await fetch('/api/download', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ groupIds: [groupId] })
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    alert('Download started! Check the progress section for updates.');
-                }
-            } catch (error) {
-                console.error('Error starting download:', error);
-                alert('Failed to start download');
-            }
-        };
-
-        // Add event listeners
-        saveTokenBtn.addEventListener('click', handleSaveToken);
-        fetchToken();
-    });
+    }
     `;
     fs.writeFileSync(path.join(publicDir, 'app.js'), js);
 }

@@ -4,23 +4,50 @@
         <head>
             <title>GroupMe Gallery Downloader</title>
             <link rel="stylesheet" href="styles.css">
+            <script src="/socket.io/socket.io.js"></script>
         </head>
         <body>
             <div class="container">
                 <h1>GroupMe Gallery Downloader</h1>
-                <div id="token-section">
-                    <!-- ... existing token input ... -->
+                <div id="token-section" class="card">
+                    <h2>API Token</h2>
+                    <div class="input-group">
+                        <input type="text" id="token-input" placeholder="Enter your GroupMe API token">
+                        <button id="save-token-btn" class="primary-btn">Save Token</button>
+                    </div>
                 </div>
-                <div id="groups-section">
+                <div id="groups-section" class="hidden">
                     <h2>Your Groups</h2>
-                    <div id="groups-list"></div>
+                    <div class="button-container">
+                        <button id="select-all-btn">Select All</button>
+                        <button id="deselect-all-btn">Deselect All</button>
+                        <button id="download-btn" class="primary-btn" disabled>Download Selected</button>
+                    </div>
+                    <div id="groups-loading" class="loading-spinner">Loading groups...</div>
+                    <div id="groups-container"></div>
                 </div>
-                <div id="preview-section" style="display: none">
+                <div id="preview-section" class="hidden">
                     <h2>Image Previews</h2>
                     <div id="image-previews" class="preview-grid"></div>
                 </div>
+                <div id="progress-section" class="hidden">
+                    <h2>Download Progress</h2>
+                    <div class="progress-info">
+                        <p>Group Progress: <span id="current-group">0</span>/<span id="total-groups">0</span></p>
+                        <div class="progress-bar">
+                            <div id="group-progress-fill" class="progress-fill"></div>
+                        </div>
+                        <p>Media Progress: <span id="completed-media">0</span>/<span id="total-media">0</span></p>
+                        <div class="progress-bar">
+                            <div id="media-progress-fill" class="progress-fill"></div>
+                        </div>
+                    </div>
+                    <div id="log-container" class="log-container">
+                        <div id="log-output"></div>
+                    </div>
+                </div>
             </div>
-            <script src="client.js"></script>
+            <script src="app.js"></script>
         </body>
         </html>
     

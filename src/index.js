@@ -6,6 +6,15 @@ import { mediaDownloader } from './media-downloader';
 import db from './db';
 import { startGUI } from './gui';
 
+
+const portfinder = require('portfinder');
+
+portfinder.getPort({ port: 3456 }, (err, port) => {
+  server.listen(port, () => {
+    console.log(`GUI running on http://localhost:${port}`);
+  });
+});
+
 /**
  * Fetch the groups a user has access to.
  *
