@@ -220,33 +220,45 @@ export function startGUI() {
 async function fetchAvailableGroups(authToken) {
   let allGroups = [];
   let page = 1;
-  let hasMore = true;
+  const PER_PAGE = 10;
+  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   
-  while (hasMore) {
+  while (true) {
     console.log(`Fetching groups page ${page}...`);
     
     try {
+      if (page > 1) {
+        await delay(1000);
+      }
+
       const response = await apiRequest(authToken, 'groups', {
         page: page,
-        per_page: 100
+        per_page: PER_PAGE
       });
       
       if (response.status === 401) {
         throw new Error('Unauthorized, likely an invalid token');
       }
-      
+
       const data = await response.json();
       const groups = data.response;
       
-      if (groups && groups.length > 0) {
-        allGroups = [...allGroups, ...groups.map(({ name, id }) => ({ name, id }))];
-        page++;
-      } else {
-        hasMore = false;
+      if (!groups || groups.length === 0) {
+        console.log('No more groups to fetch');
+        break;
       }
+
+      allGroups = [...allGroups, ...groups.map(({ name, id }) => ({ name, id }))];
+      
+      // If we got fewer items than requested, we've hit the last page
+      if (groups.length < PER_PAGE) {
+        break;
+      }
+
+      page++;
     } catch (error) {
       console.error('Error fetching groups:', error);
-      hasMore = false;
+      break;
     }
   }
   
