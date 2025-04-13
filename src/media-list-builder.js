@@ -33,33 +33,81 @@ function mappedMediaObjects(mediaObjects) {
  * build up an array of downloadable media URL's
  *
  * @param  {String} token GroupMe Developer Token ID
- * @param  {Integer} id GroupMe Conversation ID
- * @param  {Array} media Array of media objects
- * @param  {String} page Current page
+ * @param  {Integer} groupId GroupMe Conversation ID
  * @return {Promise}
  */
-export async function mediaListBuilder(token, id, media = [], page = '') {
-  const path = page
-    ? `conversations/${id}/gallery?before=${page}&limit=100`
-    : `conversations/${id}/gallery?limit=100`;
+export async function mediaListBuilder(token, groupId) {
+  if (!token || !groupId) {
+    throw new Error('Token and groupId are required');
+  }
 
-  return await apiRequest(token, path)
-    .then(handleResponse)
-    .then(({ response: { messages } }) => {
-      console.log(chalk.cyan(`Fetching data from: ${chalk.green(path)}`));
-      const hasMessages = !!messages.length;
+  try {
+    // Get group info first
+    const groupResponse = await apiRequest(token, `groups/${groupId}`);
+    const groupData = await groupResponse.json();
+    const groupName = groupData.response.name;
 
-      if (hasMessages) {
-        const additionalMedia = media.concat(messages);
-        const lastTimeStamp = messages[messages.length - 1].gallery_ts;
-        return mediaListBuilder(token, id, additionalMedia, lastTimeStamp);
+    let allMedia = [];
+    let beforeId = null;
+    let hasMore = true;
+    let downloadUrls = new Set();
+
+    while (hasMore) {
+      const endpoint = beforeId 
+        ? `groups/${groupId}/messages?limit=100&before_id=${beforeId}`
+        : `groups/${groupId}/messages?limit=100`;
+
+      const response = await apiRequest(token, endpoint);
+      
+      // Handle both 200 and 304 responses
+      if (response.status !== 200 && response.status !== 304) {
+        if (response.status === 401) {
+          throw new Error('Invalid or expired token');
+        }
+        throw new Error(`API request failed with status ${response.status}`);
       }
 
-      const mediaDownloadArray = mappedMediaObjects(media);
-      db.addMedia(id, mediaDownloadArray);
-      return { media: mediaDownloadArray, id };
-    })
-    .catch((error) => {
-      throw new Error(error);
-    });
+      // For 304, treat as if we got the same data again
+      const data = response.status === 304 ? { response: { messages: [] } } : await response.json();
+      const messages = data.response.messages;
+
+      if (!messages || messages.length === 0) {
+        hasMore = false;
+        continue;
+      }
+
+      messages.forEach(msg => {
+        if (msg.attachments) {
+          msg.attachments
+            .filter(att => att.type === 'image')
+            .forEach(att => {
+              if (!downloadUrls.has(att.url)) {
+                downloadUrls.add(att.url);
+                allMedia.push({
+                  url: att.url,
+                  messageId: msg.id,
+                  user: msg.name ? sanitizeString(msg.name) : 'UnknownUser',
+                  created: msg.created_at
+                });
+              }
+            });
+        }
+      });
+
+      beforeId = messages[messages.length - 1].id;
+    }
+
+    return {
+      groupId,
+      groupName: sanitizeString(groupName),
+      media: allMedia,
+      token
+    };
+  } catch (error) {
+    // Improve error message
+    const message = error.message.includes('status') 
+      ? error.message 
+      : `Failed to build media list: ${error.message}`;
+    throw new Error(message);
+  }
 }

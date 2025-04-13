@@ -13,26 +13,36 @@ import open from 'open';
 const __filename = __filename || module.filename;
 const __dirname = path.dirname(__filename);
 
-
-const express = require('express');
 const app = express();
-const server = require('http').createServer(app);
+const server = http.createServer(app);
+
+let socketIO; // Declare at module scope
 
 // Setup express app
 const PORT = 3456; // Default port
 
-server.listen(PORT, () => {
-  console.log(`GUI running on http://localhost:${PORT}`);
-}).on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.warn(`Port ${PORT} in use, trying ${PORT + 1}...`);
-    server.listen(PORT + 1, () => {
-      console.log(`GUI running on http://localhost:${PORT + 1}`);
-    });
-  }
-});
-
 export function startGUI() {
+  // Initialize socket.io
+  socketIO = require('socket.io')(server);
+
+  // Override console.log for socket.io logging
+  const originalConsoleLog = console.log;
+  console.log = function() {
+    originalConsoleLog.apply(console, arguments);
+    if (socketIO) {
+      const message = Array.from(arguments).join(' ');
+      socketIO.emit('log', { message });
+    }
+  };
+
+  // Socket.io connection handling
+  socketIO.on('connection', (socket) => {
+    console.log('Client connected');
+    socket.on('disconnect', () => {
+      console.log('Client disconnected');
+    });
+  });
+
   // Ensure the correct path
   const packageJsonPath = path.join(__dirname, '../package.json');
   const packageData = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
@@ -91,17 +101,38 @@ export function startGUI() {
     }
 
     try {
-      const response = await apiRequest(token, `groups/${groupId}/messages?limit=20`);
-      const messages = await response.json();
-      
-      // Filter messages with attachments that are images
-      const imageUrls = messages.response.messages
-        .filter(msg => msg.attachments && msg.attachments.some(att => att.type === 'image'))
-        .map(msg => msg.attachments.find(att => att.type === 'image').url);
+      let allImages = [];
+      let beforeId = null;
+      let count = 0;
+      const limit = 100;
 
-      res.json({ images: imageUrls });
+      // Fetch messages until we have no more or hit reasonable limit
+      while (count < 1000) {
+        const endpoint = beforeId 
+          ? `groups/${groupId}/messages?limit=${limit}&before_id=${beforeId}`
+          : `groups/${groupId}/messages?limit=${limit}`;
+
+        const response = await apiRequest(token, endpoint);
+        const data = await response.json();
+        const messages = data.response.messages;
+
+        if (!messages || messages.length === 0) break;
+
+        // Extract image URLs from this batch
+        const imageUrls = messages
+          .filter(msg => msg.attachments && msg.attachments.some(att => att.type === 'image'))
+          .map(msg => msg.attachments.find(att => att.type === 'image').url);
+
+        allImages = [...allImages, ...imageUrls];
+        beforeId = messages[messages.length - 1].id;
+        count += messages.length;
+
+        if (messages.length < limit) break;
+      }
+
+      res.json({ images: allImages });
     } catch (error) {
-      res.status(500).json({ error: 'Failed to fetch image previews' });
+      res.status(500).json({ error: 'Failed to fetch images' });
     }
   });
 
@@ -167,37 +198,21 @@ export function startGUI() {
   // Serve media files
   app.use('/media', express.static(path.join(__dirname, '../media')));
 
-  // Start the server
-  server = http.createServer(app);
-  
-  // Setup Socket.io
-  socketIO = require('socket.io')(server);
-  
-  socketIO.on('connection', (socket) => {
-    console.log('Client connected');
-    
-    socket.on('disconnect', () => {
-      console.log('Client disconnected');
-    });
-  });
-
   server.listen(PORT, () => {
     console.log(`GUI server running at http://localhost:${PORT}`);
     open(`http://localhost:${PORT}`);
+  }).on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`Port ${PORT} in use, trying ${PORT + 1}...`);
+      server.listen(PORT + 1, () => {
+        console.log(`GUI server running at http://localhost:${PORT + 1}`);
+        open(`http://localhost:${PORT + 1}`);
+      });
+    }
   });
 
   return server;
 }
-
-// Override console.log to also emit socket events
-const originalConsoleLog = console.log;
-console.log = function() {
-  originalConsoleLog.apply(console, arguments);
-  if (socketIO) {
-    const message = Array.from(arguments).join(' ');
-    socketIO.emit('log', { message });
-  }
-};
 
 /**
  * Fetch the groups a user has access to.
@@ -244,9 +259,11 @@ async function fetchAvailableGroups(authToken) {
 async function processGroups(authToken, groupIds) {
   console.log(`Selected ${groupIds.length} groups for downloading`);
   
-  socketIO.emit('downloadStarted', { 
-    totalGroups: groupIds.length
-  });
+  if (socketIO) {
+    socketIO.emit('downloadStarted', { 
+      totalGroups: groupIds.length
+    });
+  }
   
   try {
     // Process each group sequentially
@@ -254,20 +271,26 @@ async function processGroups(authToken, groupIds) {
       const groupId = groupIds[i];
       console.log(`\nProcessing group ${i + 1} of ${groupIds.length}`);
       
-      socketIO.emit('groupProcessing', { 
-        groupId,
-        current: i + 1,
-        total: groupIds.length
-      });
+      if (socketIO) {
+        socketIO.emit('groupProcessing', { 
+          groupId,
+          current: i + 1,
+          total: groupIds.length
+        });
+      }
       
       await processGroupMedia(authToken, groupId);
     }
     
     console.log('\nAll groups have been processed!');
-    socketIO.emit('downloadCompleted');
+    if (socketIO) {
+      socketIO.emit('downloadCompleted');
+    }
   } catch (error) {
     console.error('Error processing groups:', error);
-    socketIO.emit('downloadError', { error: error.message });
+    if (socketIO) {
+      socketIO.emit('downloadError', { error: error.message });
+    }
   }
 }
 
@@ -283,19 +306,23 @@ async function processGroupMedia(authToken, groupId) {
     console.log(
       `Restarting where you left off. ${localGroupData.media.length} downloads to go!`
     );
-    socketIO.emit('mediaProcessing', {
-      groupId,
-      total: localGroupData.media.length,
-      remaining: localGroupData.media.length
-    });
+    if (socketIO) {
+      socketIO.emit('mediaProcessing', {
+        groupId,
+        total: localGroupData.media.length,
+        remaining: localGroupData.media.length
+      });
+    }
     await mediaDownloader(localGroupData, socketIO);
   } else {
     const mediaListFromRemote = await mediaListBuilder(authToken, groupId);
-    socketIO.emit('mediaProcessing', {
-      groupId,
-      total: mediaListFromRemote.media.length,
-      remaining: mediaListFromRemote.media.length
-    });
+    if (socketIO) {
+      socketIO.emit('mediaProcessing', {
+        groupId,
+        total: mediaListFromRemote.media.length,
+        remaining: mediaListFromRemote.media.length
+      });
+    }
     await mediaDownloader(mediaListFromRemote, socketIO);
   }
 }
@@ -328,27 +355,7 @@ function createHTMLFile(publicDir) {
                         <button id="download-btn" class="primary-btn" disabled>Download Selected</button>
                     </div>
                     <div id="groups-loading" class="loading-spinner">Loading groups...</div>
-                    <div id="groups-container"></div>
-                </div>
-                <div id="preview-section" class="hidden">
-                    <h2>Image Previews</h2>
-                    <div id="image-previews" class="preview-grid"></div>
-                </div>
-                <div id="progress-section" class="hidden">
-                    <h2>Download Progress</h2>
-                    <div class="progress-info">
-                        <p>Group Progress: <span id="current-group">0</span>/<span id="total-groups">0</span></p>
-                        <div class="progress-bar">
-                            <div id="group-progress-fill" class="progress-fill"></div>
-                        </div>
-                        <p>Media Progress: <span id="completed-media">0</span>/<span id="total-media">0</span></p>
-                        <div class="progress-bar">
-                            <div id="media-progress-fill" class="progress-fill"></div>
-                        </div>
-                    </div>
-                    <div id="log-container" class="log-container">
-                        <div id="log-output"></div>
-                    </div>
+                    <div id="groups-container" class="groups-grid"></div>
                 </div>
             </div>
             <script src="app.js"></script>
@@ -357,6 +364,7 @@ function createHTMLFile(publicDir) {
     `;
     fs.writeFileSync(path.join(publicDir, 'index.html'), html);
 }
+
 // CSS file for the GUI
 function createCSSFile(publicDir) {
     const cssContent = `
@@ -441,18 +449,46 @@ function createCSSFile(publicDir) {
         margin-top: 15px;
     }
     .group-item {
-        padding: 10px;
+        padding: 15px;
+        margin-bottom: 10px;
         border: 1px solid #ddd;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: background-color 0.3s;
+        border-radius: 8px;
+        position: relative;
     }
-    .group-item:hover {
-        background-color: #f9f9f9;
+    .download-status {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background-color: #ddd;
     }
-    .group-item.selected {
-        background-color: #e3f2fd;
-        border-color: #00aff0;
+    .download-status.downloaded {
+        background-color: #4CAF50;
+    }
+    .download-status.downloading {
+        background-color: #FFC107;
+        animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
+    .group-preview {
+        display: none;
+        margin-top: 15px;
+        border-top: 1px solid #eee;
+        padding-top: 15px;
+    }
+    .group-preview.active {
+        display: block;
+    }
+    .preview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 10px;
     }
     .progress-bar {
         height: 20px;
@@ -526,12 +562,6 @@ function createCSSFile(publicDir) {
         color: #00aff0;
         text-decoration: none;
     }
-    .preview-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 1rem;
-        margin-top: 1rem;
-    }
     .preview-image {
         width: 100%;
         height: 200px;
@@ -546,58 +576,238 @@ function createCSSFile(publicDir) {
     `;
     fs.writeFileSync(path.join(publicDir, 'styles.css'), cssContent);
 }
+
 // Client-side JavaScript for the GUI
 function createClientJSFile(publicDir) {
     const js = `
     document.addEventListener('DOMContentLoaded', function() {
-        // ... rest of the code ...
+        const socket = io();
+        const tokenInput = document.getElementById('token-input');
+        const saveTokenBtn = document.getElementById('save-token-btn');
+        const groupsSection = document.getElementById('groups-section');
+        const groupsContainer = document.getElementById('groups-container');
+        const selectAllBtn = document.getElementById('select-all-btn');
+        const deselectAllBtn = document.getElementById('deselect-all-btn');
+        const downloadBtn = document.getElementById('download-btn');
+        const progressSection = document.getElementById('progress-section');
+        const currentGroup = document.getElementById('current-group');
+        const totalGroups = document.getElementById('total-groups');
+        const completedMedia = document.getElementById('completed-media');
+        const totalMedia = document.getElementById('total-media');
+        const groupProgressFill = document.getElementById('group-progress-fill');
+        const mediaProgressFill = document.getElementById('media-progress-fill');
+        const logOutput = document.getElementById('log-output');
+        
+        // Check for existing token
+        fetch('/api/token')
+            .then(response => response.json())
+            .then(data => {
+                if (data.token) {
+                    tokenInput.value = data.token;
+                    loadGroups();
+                }
+            });
 
-        function renderGroups(groups) {
-            const html = groups.map(group => \\\`
-                <div class="group-item" data-id="\\\${group.id}">
-                    <div class="group-info">
-                        <h3>\\\${group.name}</h3>
-                    </div>
-                    <div class="group-actions">
-                        <button onclick="showPreviews('\\\${group.id}')" class="preview-btn">
-                            Show Previews
-                        </button>
-                        <button onclick="downloadGroup('\\\${group.id}')" class="download-btn primary-btn">
-                            Download
-                        </button>
-                    </div>
-                </div>
-            \\\`).join('');
-            groupsContainer.innerHTML = html;
+        // Save token
+        saveTokenBtn.addEventListener('click', () => {
+            const token = tokenInput.value.trim();
+            if (!token) return;
+
+            fetch('/api/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token })
+            })
+            .then(() => loadGroups());
+        });
+
+        // Load groups
+        function loadGroups() {
+            groupsSection.classList.remove('hidden');
+            groupsContainer.innerHTML = '<div class="loading-spinner">Loading groups...</div>';
+
+            fetch('/api/groups')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.groups) {
+                        renderGroups(data.groups);
+                    }
+                })
+                .catch(error => {
+                    groupsContainer.innerHTML = '<div class="error">Failed to load groups</div>';
+                    console.error('Error:', error);
+                });
         }
 
-        // ... rest of the code ...
-    });
+        function renderGroups(groups) {
+            const html = groups.map(group => \`
+                <div class="group-item" data-id="\${group.id}">
+                    <div class="download-status" id="status-\${group.id}"></div>
+                    <div class="group-info">
+                        <h3>\${group.name}</h3>
+                        <input type="checkbox" class="group-select" data-id="\${group.id}">
+                        <button class="preview-btn" data-id="\${group.id}">Show All Images</button>
+                    </div>
+                    <div class="group-preview" id="preview-\${group.id}">
+                        <div class="preview-grid"></div>
+                    </div>
+                </div>
+            \`).join('');
+            
+            groupsContainer.innerHTML = html;
 
-    // Wrap client-side definitions to prevent errors in Node
-    if (typeof window !== "undefined") {
-        window.showPreviews = async function(groupId) {
-            try {
-                const response = await fetch(\`/api/preview/\${groupId}\`); // updated: escaped inner backticks
-                const data = await response.json();
-                
-                previewGrid.innerHTML = data.images
-                    .map(url => \`
-                        <img 
-                            src="\${url}" 
-                            class="preview-image" 
-                            alt="Group Image Preview"
-                            onclick="window.open('\${url}', '_blank')"
-                        >
-                    \`)
-                    .join('');
-                            
-                previewSection.style.display = 'block';
-            } catch (error) {
-                console.error('Failed to load previews:', error);
+            // Check downloaded status for each group
+            groups.forEach(group => {
+                fetch(\`/api/media/\${group.id}\`)
+                    .then(response => response.json())
+                    .then(data => {
+                        const status = document.getElementById(\`status-\${group.id}\`);
+                        if (data.files && data.files.length > 0) {
+                            status.classList.add('downloaded');
+                        }
+                    });
+            });
+
+            // Add preview functionality
+            document.querySelectorAll('.preview-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    const groupId = this.dataset.id;
+                    const previewSection = document.getElementById(\`preview-\${groupId}\`);
+                    const previewGrid = previewSection.querySelector('.preview-grid');
+                    
+                    if (previewSection.classList.contains('active')) {
+                        previewSection.classList.remove('active');
+                        this.textContent = 'Show All Images';
+                        return;
+                    }
+                    
+                    this.textContent = 'Hide Images';
+                    previewSection.classList.add('active');
+                    previewGrid.innerHTML = '<div class="loading-spinner">Loading images...</div>';
+
+                    fetch(\`/api/preview/\${groupId}\`)
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.images && data.images.length > 0) {
+                                previewGrid.innerHTML = data.images
+                                    .map(url => \`
+                                        <img 
+                                            src="\${url}" 
+                                            class="preview-image" 
+                                            alt="Group Image"
+                                            loading="lazy"
+                                            onclick="window.open('\${url}', '_blank')"
+                                        >
+                                    \`).join('');
+                            } else {
+                                previewGrid.innerHTML = '<p>No images found in this group</p>';
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Preview error:', error);
+                            previewGrid.innerHTML = '<p>Failed to load images</p>';
+                        });
+                });
+            });
+
+            // Add change listeners to checkboxes
+            document.querySelectorAll('.group-select').forEach(checkbox => {
+                checkbox.addEventListener('change', updateDownloadButton);
+            });
+            
+            updateDownloadButton();
+        }
+
+        function updateDownloadButton() {
+            const selectedGroups = document.querySelectorAll('.group-select:checked');
+            downloadBtn.disabled = selectedGroups.length === 0;
+        }
+
+        // Select/Deselect all functionality
+        selectAllBtn.addEventListener('click', () => {
+            document.querySelectorAll('.group-select').forEach(checkbox => {
+                checkbox.checked = true;
+            });
+            updateDownloadButton();
+        });
+
+        deselectAllBtn.addEventListener('click', () => {
+            document.querySelectorAll('.group-select').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+            updateDownloadButton();
+        });
+
+        // Download functionality
+        downloadBtn.addEventListener('click', () => {
+            const selectedGroups = Array.from(document.querySelectorAll('.group-select:checked'))
+                .map(checkbox => checkbox.dataset.id);
+            
+            if (selectedGroups.length === 0) return;
+
+            fetch('/api/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ groupIds: selectedGroups })
+            })
+            .then(() => {
+                progressSection.classList.remove('hidden');
+                totalGroups.textContent = selectedGroups.length;
+            });
+        });
+
+        // Socket.io event handlers
+        socket.on('log', (data) => {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.textContent = data.message;
+            logOutput.appendChild(entry);
+            logOutput.scrollTop = logOutput.scrollHeight;
+        });
+
+        socket.on('downloadStarted', (data) => {
+            progressSection.classList.remove('hidden');
+            totalGroups.textContent = data.totalGroups;
+            currentGroup.textContent = '0';
+        });
+
+        socket.on('groupProcessing', (data) => {
+            const status = document.getElementById(\`status-\${data.groupId}\`);
+            if (status) {
+                status.classList.remove('downloaded');
+                status.classList.add('downloading');
             }
-        };
-    }
+            currentGroup.textContent = data.current;
+            const progress = (data.current / data.total) * 100;
+            groupProgressFill.style.width = progress + '%';
+        });
+
+        socket.on('mediaProcessing', (data) => {
+            totalMedia.textContent = data.total;
+            completedMedia.textContent = data.total - data.remaining;
+            const progress = ((data.total - data.remaining) / data.total) * 100;
+            mediaProgressFill.style.width = progress + '%';
+            
+            const status = document.getElementById(\`status-\${data.groupId}\`);
+            if (status) {
+                if (data.remaining === 0) {
+                    status.classList.remove('downloading');
+                    status.classList.add('downloaded');
+                } else {
+                    status.classList.remove('downloaded');
+                    status.classList.add('downloading');
+                }
+            }
+        });
+
+        socket.on('downloadCompleted', () => {
+            // Update all downloading indicators to completed
+            document.querySelectorAll('.download-status.downloading').forEach(status => {
+                status.classList.remove('downloading');
+                status.classList.add('downloaded');
+            });
+        });
+    });
     `;
     fs.writeFileSync(path.join(publicDir, 'app.js'), js);
 }

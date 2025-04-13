@@ -115,50 +115,44 @@ function requestMediaItem(mediaUrl) {
  * @param  {Object} socketIO (optional) - Socket.IO instance for real-time updates
  * @return {Promise} Resolves when all downloads are complete
  */
-export function mediaDownloader({ media, id }, socketIO) {
+export async function mediaDownloader(mediaList) {
+  if (!mediaList || !mediaList.groupId || !mediaList.groupName) {
+    throw new Error('Invalid media list: missing group information');
+  }
+
+  const baseDir = path.join(__dirname, '../media', mediaList.groupName);
+
+  // Ensure media directory exists
+  if (!fs.existsSync(baseDir)) {
+    fs.mkdirSync(baseDir, { recursive: true });
+  }
+
   return new Promise((resolve, reject) => {
     try {
-      const TOTAL_PHOTOS = media.length;
-
-      if (!fs.existsSync(MEDIA_DIR)) {
-        fs.mkdirSync(MEDIA_DIR);
-      }
-
-      let GROUP_MEDIA_DIR;
-
-      if (!fs.existsSync(`${MEDIA_DIR}/${id}`)) {
-        fs.mkdirSync(`${MEDIA_DIR}/${id}`, { recursive: true });
-      }
-
-      GROUP_MEDIA_DIR = path.resolve(MEDIA_DIR, id);
+      const TOTAL_PHOTOS = mediaList.media.length;
 
       const downloader = (arr, curr = 1) => {
-        if (arr.length) {
-          let { url: URL, user: USER, created: CREATED_AT } = arr[0];
+        // Guard against undefined or null array
+        if (!arr || !Array.isArray(arr)) {
+          logWithTime(chalk.yellow('No media items to process'));
+          return resolve();
+        }
+
+        if (arr.length > 0) {
+          let mediaItem = arr.shift(); // Remove and get first item
+          let { url: URL, user: USER, created: CREATED_AT } = mediaItem;
 
           // Ensure all URL's exist, and are pointing to GroupMe
           if (!URL || typeof URL !== 'string' || !URL.includes('groupme.com')) {
-            logWithTime(chalk.yellow(`Skipping invalid URL for item ${curr}`));
-            curr = curr + 1;
-            db.removeMediaItem(id, { url: URL });
-            return downloader(db.getMedia(id), curr);
+            logWithTime(chalk.yellow(`Skipping invalid URL for item ${curr}/${TOTAL_PHOTOS}`));
+            db.removeMediaItem(mediaList.groupId, { url: URL });
+            return downloader(arr, curr + 1);
           }
 
           logWithTime(chalk.cyan(`Starting download ${curr}/${TOTAL_PHOTOS}: ${URL}`));
-          
-          // Send socket update if available
-          if (socketIO) {
-            socketIO.emit('mediaDownloading', { 
-              groupId: id,
-              current: curr,
-              total: TOTAL_PHOTOS,
-              url: URL,
-              user: USER
-            });
-          }
-          
+
           const fileName = renameFile(URL, USER);
-          const filePath = `${GROUP_MEDIA_DIR}/${fileName}`;
+          const filePath = path.join(baseDir, fileName);
           const file = fs.createWriteStream(filePath);
           const request = requestMediaItem(URL);
           let downloadStartTime = Date.now();
@@ -169,23 +163,18 @@ export function mediaDownloader({ media, id }, socketIO) {
             logWithTime(chalk.red(`Download timed out after ${elapsed.toFixed(1)} seconds: ${URL}`));
             request.destroy();
             file.end();
-            
+
             // Clean up partial file
             if (fs.existsSync(filePath)) {
               fs.unlinkSync(filePath);
             }
-            
+
             // Move on to the next item
-            db.removeMediaItem(id, { url: URL });
-            curr = curr + 1;
-            return downloader(db.getMedia(id), curr);
+            db.removeMediaItem(mediaList.groupId, { url: URL });
+            return downloader(arr, curr + 1);
           }, DOWNLOAD_TIMEOUT);
 
           request.on('response', (response) => {
-            /**
-             * So apparently GroupMe passes through URL's to certain meme maker sites
-             * and sometimes those sites 301 or throw other shitty errors.
-             */
             if (response.statusCode !== 200) {
               logWithTime(
                 chalk.yellow('Skipping, could not fetch:'),
@@ -197,19 +186,17 @@ export function mediaDownloader({ media, id }, socketIO) {
 
               clearTimeout(downloadTimeout);
               file.end();
-              db.removeMediaItem(id, { url: URL });
-              curr = curr + 1;
+              db.removeMediaItem(mediaList.groupId, { url: URL });
 
-              return downloader(db.getMedia(id), curr);
+              return downloader(arr, curr + 1);
             }
 
             const total = Number(response.headers['content-length']);
-            
-            // If we don't have content-length, print more info
+
             if (!total) {
               logWithTime(chalk.yellow(`Warning: No content-length header for ${URL}`));
             }
-            
+
             const bar = new ProgressBar(`${getTimestamp()} Downloading [:bar] [${curr} / ${TOTAL_PHOTOS}]`, {
               complete: '=',
               incomplete: '-',
@@ -223,15 +210,14 @@ export function mediaDownloader({ media, id }, socketIO) {
             response.on('data', (chunk) => {
               receivedBytes += chunk.length;
               file.write(chunk);
-              
+
               if (total) {
                 bar.tick(chunk.length);
               } else {
-                // If no content-length, provide more detailed progress
                 const now = Date.now();
-                if (now - lastProgressTime > 5000) { // Every 5 seconds
+                if (now - lastProgressTime > 5000) {
                   lastProgressTime = now;
-                  logWithTime(chalk.cyan(`Still downloading #${curr}, received ${(receivedBytes/1024/1024).toFixed(2)}MB so far...`));
+                  logWithTime(chalk.cyan(`Still downloading #${curr}, received ${(receivedBytes / 1024 / 1024).toFixed(2)}MB so far...`));
                 }
               }
             });
@@ -239,85 +225,71 @@ export function mediaDownloader({ media, id }, socketIO) {
             response.on('end', () => {
               const elapsed = (Date.now() - downloadStartTime) / 1000;
               clearTimeout(downloadTimeout);
-              
+
               file.end(() => {
                 try {
-                  // Change the local file system's timestamp to the original upload date of the file
                   if (CREATED_AT) {
                     const timestamp = new Date(CREATED_AT);
                     fs.utimesSync(filePath, timestamp, timestamp);
                   }
                   logWithTime(chalk.green(`Download #${curr} completed successfully in ${elapsed.toFixed(1)}s`));
-                  
-                  // Send socket update if available
-                  if (socketIO) {
-                    socketIO.emit('mediaDownloaded', {
-                      groupId: id,
-                      fileName,
-                      filePath: `/media/${id}/${fileName}`,
-                      current: curr,
-                      total: TOTAL_PHOTOS
-                    });
-                  }
                 } catch (err) {
                   logWithTime(chalk.yellow(`Couldn't set timestamp for ${fileName}: ${err.message}`));
                 }
               });
 
-              curr = curr + 1;
-              db.removeMediaItem(id, { url: URL });
-
-              // Small delay between downloads to avoid overwhelming connections
               setTimeout(() => {
-                return downloader(db.getMedia(id), curr);
+                db.removeMediaItem(mediaList.groupId, { url: URL });
+                const nextItem = curr + 1;
+                if (nextItem > TOTAL_PHOTOS) {
+                  logWithTime(chalk.green('All downloads completed!'));
+                  return resolve();
+                }
+                return downloader(arr, nextItem);
               }, 100);
             });
           });
 
-          // Handle request errors
           request.on('error', (error) => {
             const elapsed = (Date.now() - downloadStartTime) / 1000;
             clearTimeout(downloadTimeout);
             logWithTime(chalk.red(`Error downloading ${URL} after ${elapsed.toFixed(1)}s: ${error.message}`));
             file.end();
-            
-            // Clean up partial file
+
             if (fs.existsSync(filePath)) {
               fs.unlinkSync(filePath);
             }
-            
-            db.removeMediaItem(id, { url: URL });
-            curr = curr + 1;
-            return downloader(db.getMedia(id), curr);
+
+            db.removeMediaItem(mediaList.groupId, { url: URL });
+            return downloader(arr, curr + 1);
           });
 
           file.on('error', (error) => {
             logWithTime(chalk.red(`File system error for ${URL}: ${error.message}`));
             clearTimeout(downloadTimeout);
             request.destroy();
-            
-            db.removeMediaItem(id, { url: URL });
-            curr = curr + 1;
-            return downloader(db.getMedia(id), curr);
+
+            db.removeMediaItem(mediaList.groupId, { url: URL });
+            return downloader(arr, curr + 1);
           });
 
           request.end();
         } else {
           logWithTime(chalk.green('All downloads completed!'));
-          resolve(); // Resolve the promise when all downloads are done
+          resolve();
         }
       };
 
-      if (!!media.length) {
+      if (mediaList.media && mediaList.media.length > 0) {
         logWithTime(chalk.green(`Starting download of ${TOTAL_PHOTOS} media items`));
-        downloader(media);
+        downloader([...mediaList.media], 1); // Create a copy of the array
       } else {
         logWithTime(chalk.green('No media to download!'));
-        resolve(); // Resolve immediately if no media to download
+        resolve();
       }
     } catch (error) {
       logWithTime(chalk.red('Error in media downloader:'), error);
-      reject(error); // Reject the promise if there's an error
+      reject(error);
     }
   });
 }

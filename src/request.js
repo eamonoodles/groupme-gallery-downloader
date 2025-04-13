@@ -1,34 +1,25 @@
 import fetch from 'node-fetch';
 
 export const handleResponse = response => {
-  if (response.ok) {
+  if (response.ok || response.status === 304) {
     return response.json();
   }
-  throw new Error(response.status);
+  throw new Error(`HTTP ${response.status}: ${response.statusText}`);
 };
 
-export default (token, path = '', options = {}) => {
-  // Build the query string for pagination if options are provided
-  const queryParams = new URLSearchParams();
-  
-  for (const [key, value] of Object.entries(options)) {
-    if (value !== undefined) {
-      queryParams.append(key, value);
-    }
-  }
-  
-  // Append query params to path if they exist
-  const queryString = queryParams.toString();
-  const fullPath = queryString ? `${path}${path.includes('?') ? '&' : '?'}${queryString}` : path;
-  
-  const url = `https://api.groupme.com/v3/${fullPath}`;
-  const requestOptions = {
+export default async function apiRequest(token, endpoint, options = {}) {
+  const response = await fetch(`https://api.groupme.com/v3/${endpoint}`, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.106 Safari/537.36',
-      'Referer': 'https://app.groupme.com/chats',
-      'X-Access-Token': token
-    }
-  };
+      'X-Access-Token': token,
+      'Accept': 'application/json'
+    },
+    ...options
+  });
 
-  return fetch(url, requestOptions);
-};
+  // Consider both 200 and 304 as successful responses
+  if (response.status !== 200 && response.status !== 304) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  return response;
+}

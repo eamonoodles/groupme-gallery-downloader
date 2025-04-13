@@ -80,18 +80,46 @@
         margin-top: 15px;
     }
     .group-item {
-        padding: 10px;
+        padding: 15px;
+        margin-bottom: 10px;
         border: 1px solid #ddd;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: background-color 0.3s;
+        border-radius: 8px;
+        position: relative;
     }
-    .group-item:hover {
-        background-color: #f9f9f9;
+    .download-status {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background-color: #ddd;
     }
-    .group-item.selected {
-        background-color: #e3f2fd;
-        border-color: #00aff0;
+    .download-status.downloaded {
+        background-color: #4CAF50;
+    }
+    .download-status.downloading {
+        background-color: #FFC107;
+        animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.5; }
+        100% { opacity: 1; }
+    }
+    .group-preview {
+        display: none;
+        margin-top: 15px;
+        border-top: 1px solid #eee;
+        padding-top: 15px;
+    }
+    .group-preview.active {
+        display: block;
+    }
+    .preview-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 10px;
     }
     .progress-bar {
         height: 20px;
@@ -164,12 +192,6 @@
     footer a {
         color: #00aff0;
         text-decoration: none;
-    }
-    .preview-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 1rem;
-        margin-top: 1rem;
     }
     .preview-image {
         width: 100%;
