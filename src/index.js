@@ -49,50 +49,27 @@ async function processGroupmeData(token) {
       throw new Error('No groups found');
     }
 
-    // Ask if user wants to select multiple groups
-    const { multiSelect } = await inquirer.prompt([
+    // Use checkbox selection for groups
+    const { groupIds } = await inquirer.prompt([
       {
-        type: 'confirm',
-        name: 'multiSelect',
-        message: 'Would you like to download from multiple groups?',
-        default: false
+        type: 'checkbox',
+        name: 'groupIds',
+        message: 'Select groups to download (use space to select, enter to confirm):',
+        choices: allGroups.map(g => ({ name: g.name, value: g.id })),
+        validate: (answer) => {
+          if (answer.length < 1) {
+            return 'You must choose at least one group.';
+          }
+          return true;
+        }
       }
     ]);
 
-    let selectedGroupIds;
-    if (multiSelect) {
-      const { groupIds } = await inquirer.prompt([
-        {
-          type: 'checkbox',
-          name: 'groupIds',
-          message: 'Select groups to download (use space to select, enter to confirm):',
-          choices: allGroups.map(g => ({ name: g.name, value: g.id })),
-          validate: (answer) => {
-            if (answer.length < 1) {
-              return 'You must choose at least one group.';
-            }
-            return true;
-          }
-        }
-      ]);
-      selectedGroupIds = groupIds;
-    } else {
-      const { groupId } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'groupId',
-          message: 'Select a group to download:',
-          choices: allGroups.map(g => ({ name: g.name, value: g.id }))
-        }
-      ]);
-      selectedGroupIds = [groupId];
-    }
-
     // Process each selected group
-    for (let i = 0; i < selectedGroupIds.length; i++) {
-      const groupId = selectedGroupIds[i];
+    for (let i = 0; i < groupIds.length; i++) {
+      const groupId = groupIds[i];
       const group = allGroups.find(g => g.id === groupId);
-      console.log(chalk.blue(`\nStarting download for ${group.name} (${i + 1}/${selectedGroupIds.length})...`));
+      console.log(chalk.blue(`\nStarting download for ${group.name} (${i + 1}/${groupIds.length})...`));
       const mediaList = await mediaListBuilder(token, groupId);
       await mediaDownloader(mediaList);
     }
